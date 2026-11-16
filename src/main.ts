@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { audioState, playCounts } from './audio';
 import { pixelRatio } from './display';
 import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
@@ -21,6 +22,8 @@ const game = new Phaser.Game({
     zoom: 1 / dpr,
   },
   render: { mipmapFilter: 'LINEAR_MIPMAP_LINEAR' },
+  // Sound is synthesised in audio.ts; Phaser's own sound manager would open a second audio context.
+  audio: { noAudio: true },
   physics: { default: 'arcade', arcade: { debug: false } },
   // Mouse + two thumbs.
   input: { activePointers: 3 },
@@ -39,4 +42,4 @@ function fit() {
 game.events.on(Phaser.Core.Events.POST_STEP, fit);
 
 // Dev-only handle for poking at state from the console or test scripts.
-if (import.meta.env.DEV) Object.assign(window, { game });
+if (import.meta.env.DEV) Object.assign(window, { game, audioDebug: () => ({ state: audioState(), counts: { ...playCounts } }) });

@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import type { UIScene } from './UIScene';
+import { sfx } from '../audio';
 import { TEX_SCALE } from '../display';
+import { recordRun } from '../storage';
 import { baseStats, rollUpgrades, type Stats } from '../upgrades';
 
 type Sprite = Phaser.Physics.Arcade.Sprite;
@@ -93,6 +95,7 @@ export class GameScene extends Phaser.Scene {
     this.keys = kb.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT') as Record<string, Phaser.Input.Keyboard.Key>;
     kb.on('keydown-ESC', this.togglePause, this);
     kb.on('keydown-P', this.togglePause, this);
+    kb.on('keydown-M', () => this.ui.toggleSound());
 
     // Alt-tab or a hidden tab swallows keyup/touchend, which leaves inputs stuck down.
     // Blur events aren't delivered everywhere, so update() also polls document.hasFocus(),
@@ -243,6 +246,7 @@ export class GameScene extends Phaser.Scene {
     if (!dir) return;
     this.fireCooldown = 1 / this.stats.fireRate;
 
+    sfx.shoot();
     const n = this.stats.multishot;
     const base = dir.angle();
     for (let i = 0; i < n; i++) {
@@ -320,9 +324,11 @@ export class GameScene extends Phaser.Scene {
     e.setData('hp', hp);
     if (hp <= 0) {
       this.kills++;
+      sfx.kill();
       this.dropGem(e.x, e.y);
       e.disableBody(true, true);
     } else {
+      sfx.hit();
       e.setTintFill(0xffffff);
       this.time.delayedCall(60, () => e.clearTint());
     }
@@ -338,6 +344,7 @@ export class GameScene extends Phaser.Scene {
     this.invuln = INVULN_SECONDS;
     this.cameras.main.shake(120, 0.006);
     if (this.hp <= 0) this.gameOver();
+    else sfx.hurt();
   }
 
   private dropGem(x: number, y: number) {
@@ -363,6 +370,7 @@ export class GameScene extends Phaser.Scene {
   private onGem(g: Sprite) {
     if (!g.active) return;
     g.disableBody(true, true);
+    sfx.gem();
     this.xp++;
     while (this.xp >= this.xpToNext()) {
       this.xp -= this.xpToNext();
@@ -376,6 +384,7 @@ export class GameScene extends Phaser.Scene {
     this.frozen = true;
     this.physics.pause();
     this.ui.updateHud(this.hudState());
+    sfx.levelUp();
     this.ui.showLevelUp(rollUpgrades(3), (upgrade) => {
       upgrade.apply(this.stats, { heal: (n) => (this.hp = Math.min(this.stats.maxHp, this.hp + n)) });
       this.pendingLevels--;
@@ -393,6 +402,8 @@ export class GameScene extends Phaser.Scene {
     this.physics.pause();
     this.hp = 0;
     this.ui.updateHud(this.hudState());
-    this.ui.showGameOver(this.hudState(), () => this.scene.restart());
+    sfx.gameOver();
+    const newBest = recordRun({ time: this.elapsed, level: this.level, kills: this.kills });
+    this.ui.showGameOver(this.hudState(), newBest, () => this.scene.restart());
   }
 }

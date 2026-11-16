@@ -7,7 +7,7 @@ A mobile-first, landscape, top-down survival shooter: survive waves, collect XP,
 ## Controls
 
 - **Touch:** left thumb anywhere on the left half moves (floating stick). Right thumb on the right half aims. Lift it and shots auto-aim at the nearest enemy.
-- **Desktop:** WASD / arrows move. Hold the mouse button to aim; release to auto-aim.
+- **Desktop:** WASD / arrows move. Hold the mouse button to aim; release to auto-aim. Esc or P pauses, M mutes.
 
 ## Run
 
@@ -27,6 +27,8 @@ src/
   main.ts              Phaser config, device-pixel canvas sizing
   display.ts           Pixel ratio and texture scale
   upgrades.ts          Player stats and the level-up upgrade pool
+  audio.ts             Synthesised sound effects (Web Audio, no asset files)
+  storage.ts           Saved mute setting and best run (localStorage)
   input/TwinStick.ts   Floating twin touch joysticks
   scenes/
     BootScene.ts       Generates placeholder textures
@@ -41,3 +43,4 @@ src/
 - Enemies spawn just outside the camera view, relative to the camera.
 - Bullets, enemies, and gems are pooled (no per-shot allocation of game objects).
 - Menus ignore taps for 400 ms after opening, and a choice needs press and release on the same card, so a thumb lifting mid-fight can't pick an upgrade by accident.
+- Sound is generated in code, and starts on the first touch or key press because browsers block audio before that. The mute setting and the longest run are saved in the browser's localStorage, so they are per device and per browser.

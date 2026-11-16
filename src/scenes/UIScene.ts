@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import { TwinStick } from '../input/TwinStick';
+import { sfx } from '../audio';
 import { pixelRatio } from '../display';
+import { bestRun, isMuted, setMuted } from '../storage';
 import type { HudState } from './GameScene';
 import type { Upgrade } from '../upgrades';
 
@@ -12,6 +14,12 @@ const FONT = 'system-ui, sans-serif';
 const SITE_URL = 'https://ledsec.dev/games/';
 /** Half the centre-to-centre gap between two side-by-side menu buttons. */
 const PAIR_OFFSET = 98;
+
+/** Seconds as m:ss. */
+function clock(seconds: number) {
+  const t = Math.floor(seconds);
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+}
 
 /**
  * Screen-space layer: HUD, touch sticks, and menus. Laid out in CSS pixels; the camera
@@ -94,9 +102,7 @@ export class UIScene extends Phaser.Scene {
     g.fillStyle(0x1e293b).fillRect(0, 0, w, 5);
     g.fillStyle(0x4ade80).fillRect(0, 0, (s.xp / s.xpNext) * w, 5);
 
-    const t = Math.floor(s.elapsed);
-    const clock = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
-    this.info.setText(`Lv ${s.level}   ${clock}   ${s.kills} kills`);
+    this.info.setText(`Lv ${s.level}   ${clock(s.elapsed)}   ${s.kills} kills`);
   }
 
   showLevelUp(choices: Upgrade[], onPick: (u: Upgrade) => void) {
@@ -123,15 +129,20 @@ export class UIScene extends Phaser.Scene {
     return items;
   }
 
-  showGameOver(s: HudState, onRestart: () => void) {
-    const t = Math.floor(s.elapsed);
-    const text = `Survived ${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}  ·  Level ${s.level}  ·  ${s.kills} kills`;
+  showGameOver(s: HudState, newBest: boolean, onRestart: () => void) {
+    const text = `Survived ${clock(s.elapsed)}  ·  Level ${s.level}  ·  ${s.kills} kills`;
+    const best = bestRun();
+    const bestText = newBest ? 'New best!' : best ? `Best ${clock(best.time)}  ·  Level ${best.level}  ·  ${best.kills} kills` : '';
     this.openMenu(() => {
       const { w, h } = this;
-      const summary = this.label(w / 2, h * 0.45, text, { fontSize: '18px', color: '#cbd5e1' }).setOrigin(0.5);
+      const summary = this.label(w / 2, h * 0.43, text, { fontSize: '18px', color: '#cbd5e1' }).setOrigin(0.5);
+      const record = this
+        .label(w / 2, h * 0.51, bestText, { fontSize: '15px', color: newBest ? '#fbbf24' : '#94a3b8' })
+        .setOrigin(0.5);
       return [
         this.title('Game over', h * 0.28),
         summary,
+        record,
         ...this.menuButton('Play again', h * 0.64, onRestart, { dx: -PAIR_OFFSET }),
         ...this.exitButton(h * 0.64),
       ];
@@ -146,8 +157,26 @@ export class UIScene extends Phaser.Scene {
         ...this.menuButton('Resume', h * 0.47, onResume),
         ...this.menuButton('Restart', h * 0.68, onRestart, { dx: -PAIR_OFFSET }),
         ...this.exitButton(h * 0.68),
+        ...this.soundButton(),
       ];
     });
+  }
+
+  /** Flips mute and saves it. Bound to M, and to the button on the pause menu. */
+  toggleSound() {
+    setMuted(!isMuted());
+    sfx.click();
+    if (this.menu) this.buildMenu();
+  }
+
+  /** Top-right corner of the pause menu, where the (hidden) pause button normally sits. */
+  private soundButton() {
+    const x = this.w - PAD - 60;
+    const y = PAD + 14;
+    const btn = this.add.rectangle(x, y, 120, 44, 0x1e293b).setStrokeStyle(2, 0x475569);
+    const label = this.label(x, y, isMuted() ? 'Sound: off' : 'Sound: on', { fontSize: '16px', color: '#cbd5e1' }).setOrigin(0.5);
+    this.makeButton(btn, () => this.toggleSound(), true);
+    return [btn, label];
   }
 
   closeMenu() {
@@ -200,7 +229,7 @@ export class UIScene extends Phaser.Scene {
   }
 
   /** Fires only when a press both starts and ends on the button, after the arm delay. */
-  private makeButton(target: Phaser.GameObjects.Rectangle, action: () => void) {
+  private makeButton(target: Phaser.GameObjects.Rectangle, action: () => void, keepOpen = false) {
     let armed = false;
     target.setInteractive({ useHandCursor: true });
     target.on('pointerdown', () => {
@@ -209,6 +238,9 @@ export class UIScene extends Phaser.Scene {
     target.on('pointerout', () => (armed = false));
     target.on('pointerup', () => {
       if (!armed) return;
+      // A keepOpen action rebuilds the menu itself.
+      if (keepOpen) return action();
+      sfx.click();
       this.closeMenu();
       action();
     });
