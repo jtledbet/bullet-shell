@@ -1,6 +1,8 @@
 # Bullet Shell
 
-Working title. A mobile-first, landscape, top-down survival shooter: survive waves, collect XP, pick upgrades.
+Working title. Play the latest build at https://ledsec.dev/bullet-shell/.
+
+A mobile-first, landscape, top-down survival shooter: survive waves, collect XP, pick upgrades.
 
 ## Controls
 
@@ -13,6 +15,7 @@ Working title. A mobile-first, landscape, top-down survival shooter: survive wav
 npm install
 npm run dev        # http://localhost:5173, also exposed on your LAN for phone testing
 npm run build      # typecheck + production build into dist/
+npm run deploy     # build and publish to https://ledsec.dev/bullet-shell/
 ```
 
 To play on a phone, run `npm run dev` and open the `Network:` URL it prints, with the phone on the same Wi-Fi.
