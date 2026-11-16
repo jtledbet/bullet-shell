@@ -8,6 +8,10 @@ const PAD = 32; // clears rounded corners and notches in landscape
 /** Ignore taps on a fresh menu briefly, so a thumb lifting mid-fight can't pick for you. */
 const MENU_ARM_MS = 400;
 const FONT = 'system-ui, sans-serif';
+/** Where "Exit to site" goes: the games page that links here. */
+const SITE_URL = 'https://ledsec.dev/games/';
+/** Half the centre-to-centre gap between two side-by-side menu buttons. */
+const PAIR_OFFSET = 98;
 
 /**
  * Screen-space layer: HUD, touch sticks, and menus. Laid out in CSS pixels; the camera
@@ -125,7 +129,12 @@ export class UIScene extends Phaser.Scene {
     this.openMenu(() => {
       const { w, h } = this;
       const summary = this.label(w / 2, h * 0.45, text, { fontSize: '18px', color: '#cbd5e1' }).setOrigin(0.5);
-      return [this.title('Game over', h * 0.28), summary, ...this.menuButton('Play again', h * 0.62, onRestart)];
+      return [
+        this.title('Game over', h * 0.28),
+        summary,
+        ...this.menuButton('Play again', h * 0.64, onRestart, { dx: -PAIR_OFFSET }),
+        ...this.exitButton(h * 0.64),
+      ];
     });
   }
 
@@ -135,7 +144,8 @@ export class UIScene extends Phaser.Scene {
       return [
         this.title('Paused', h * 0.25),
         ...this.menuButton('Resume', h * 0.47, onResume),
-        ...this.menuButton('Restart', h * 0.68, onRestart),
+        ...this.menuButton('Restart', h * 0.68, onRestart, { dx: -PAIR_OFFSET }),
+        ...this.exitButton(h * 0.68),
       ];
     });
   }
@@ -147,10 +157,16 @@ export class UIScene extends Phaser.Scene {
     if (this.sticks) this.sticks.enabled = true;
   }
 
-  private menuButton(text: string, y: number, action: () => void) {
-    const x = this.w / 2;
-    const btn = this.add.rectangle(x, y, 200, 56, 0x1e293b).setStrokeStyle(2, 0x5eead4);
-    const label = this.label(x, y, text, { fontSize: '20px', color: '#f8fafc' }).setOrigin(0.5);
+  /** Leaves the game for the site. Sits to the right of another button, styled quieter. */
+  private exitButton(y: number) {
+    return this.menuButton('Exit to site', y, () => window.location.assign(SITE_URL), { dx: PAIR_OFFSET, quiet: true });
+  }
+
+  private menuButton(text: string, y: number, action: () => void, opts: { dx?: number; quiet?: boolean } = {}) {
+    const x = this.w / 2 + (opts.dx ?? 0);
+    const width = opts.dx ? 180 : 200;
+    const btn = this.add.rectangle(x, y, width, 56, 0x1e293b).setStrokeStyle(2, opts.quiet ? 0x475569 : 0x5eead4);
+    const label = this.label(x, y, text, { fontSize: '20px', color: opts.quiet ? '#cbd5e1' : '#f8fafc' }).setOrigin(0.5);
     this.makeButton(btn, action);
     return [btn, label];
   }
