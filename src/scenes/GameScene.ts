@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import type { UIScene } from './UIScene';
 import { sfx } from '../audio';
-import { TEX_SCALE } from '../display';
+import { pixelRatio, TEX_SCALE } from '../display';
+import { setPauseMusic } from '../music';
 import { recordRun } from '../storage';
 import { baseStats, rollUpgrades, type Stats } from '../upgrades';
 
@@ -11,6 +12,16 @@ type Vec = Phaser.Math.Vector2;
 const WORLD = 2400;
 /** Visible world area held constant across screen sizes, so no device sees more of the arena. */
 const VIEW_AREA = 960 * 540;
+/**
+ * Auto zoom (tutorial only for now), as a multiple of the base zoom: close in on the player while no enemy is around,
+ * otherwise zoom out just enough to frame the player and the nearest enemy (down to ZOOM_FAR).
+ */
+const ZOOM_CLOSE = 1.6;
+const ZOOM_FAR = 0.6;
+/** World px kept between the nearest enemy and the screen edge. */
+const ZOOM_MARGIN = 60;
+/** How quickly the zoom eases toward its target (per second). */
+const ZOOM_RATE = 2.5;
 const CONTACT_DAMAGE = 10;
 const INVULN_SECONDS = 0.7;
 /** Draw scale for the oversized textures. Body sizes passed to setCircle are in texture pixels. */
@@ -23,6 +34,38 @@ const SHOTGUN_SPEED = 620;
 /** Seconds an enemy hit by a pellet is pushed back instead of chasing. */
 const KNOCKBACK_SECONDS = 0.12;
 const KNOCKBACK_SPEED = 260;
+/** Tutorial: how far from the player its one enemy appears. */
+const TUTORIAL_DISTANCE = 260;
+/** `?tutorial` in the URL: a tutorial-only sandbox. Each kill starts a fresh tutorial instead of the game. */
+const TUTORIAL_ONLY = new URLSearchParams(window.location.search).has('tutorial');
+/** Sandbox: pause between the kill and the next tutorial (ms). */
+const TUTORIAL_REPEAT_MS = 1200;
+/** Skeptical tutorial enemy flees inside this radius. Skeptical and neutral ones otherwise wander, drifting back past the leash. */
+const SKEPTICAL_FLEE_RADIUS = 220;
+const SKEPTICAL_FLEE_SPEED = 90;
+const WANDER_SPEED = 35;
+const WANDER_LEASH = 400;
+/** Aggro tutorial enemy's chase speed, including one aggravated by being shot. */
+const AGGRO_SPEED = 80;
+/** Tutorial temperaments, equally likely for now. */
+const TUTORIAL_MOODS = ['curious', 'skeptical', 'neutral', 'aggro'] as const;
+
+/** How an enemy moves. Normal enemies chase; the tutorial enemy has a temperament, and turns aggro when shot. */
+type Mood = 'chase' | (typeof TUTORIAL_MOODS)[number];
+
+/**
+ * Subtle tells for a tutorial enemy's temperament: a tint multiplied over the sprite and a
+ * size relative to normal. Aggro is a little redder, skeptical (timid) a little smaller.
+ */
+const MOOD_LOOK: Record<Mood, { tint: number; size: number }> = {
+  chase: { tint: 0xffffff, size: 1 },
+  curious: { tint: 0xffffff, size: 1 },
+  neutral: { tint: 0xffffff, size: 1 },
+  skeptical: { tint: 0xffffff, size: 0.85 },
+  aggro: { tint: 0xffa8a8, size: 1 },
+};
+/** How long a change of temperament takes to show (ms). */
+const MOOD_EASE_MS = 500;
 
 export interface HudState {
   hp: number;
@@ -40,6 +83,7 @@ export class GameScene extends Phaser.Scene {
   private enemies!: Phaser.Physics.Arcade.Group;
   private bullets!: Phaser.Physics.Arcade.Group;
   private gems!: Phaser.Physics.Arcade.Group;
+  private grid!: Phaser.GameObjects.TileSprite;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private readonly aimVec = new Phaser.Math.Vector2();
   private readonly moveVec = new Phaser.Math.Vector2();
@@ -59,6 +103,13 @@ export class GameScene extends Phaser.Scene {
   /** True whenever play is halted: pause, level-up, or game over. */
   private frozen = false;
   private paused = false;
+  /** Zoom that keeps the visible world area constant across screens; auto zoom multiplies it. */
+  private baseZoom = 1;
+  private zoomFactor = ZOOM_CLOSE;
+  /** The opening tutorial: black screen, one enemy, no auto-fire until it dies. */
+  private tutorial = false;
+  /** Dev builds only: names the tutorial enemy's temperament above it. */
+  private moodLabel?: Phaser.GameObjects.Text;
   private hadFocus = true;
   /** Same media query that shows #rotate in index.html. */
   private readonly rotatePrompt = window.matchMedia('(orientation: portrait) and (pointer: coarse)');
@@ -74,11 +125,15 @@ export class GameScene extends Phaser.Scene {
     this.level = 1;
     this.spawnTimer = 1;
     this.frozen = this.paused = false;
+    // Every new game opens with the tutorial.
+    this.tutorial = true;
+    setPauseMusic(false);
     this.physics.resume();
     this.time.paused = false;
 
     this.physics.world.setBounds(0, 0, WORLD, WORLD);
-    this.add.tileSprite(0, 0, WORLD, WORLD, 'grid').setOrigin(0).setTileScale(SPRITE_SCALE);
+    this.grid = this.add.tileSprite(0, 0, WORLD, WORLD, 'grid').setOrigin(0).setTileScale(SPRITE_SCALE);
+    this.grid.setVisible(!this.tutorial);
 
     this.player = this.physics.add.sprite(WORLD / 2, WORLD / 2, 'player').setDepth(10).setScale(SPRITE_SCALE);
     this.player.setCollideWorldBounds(true).setCircle(13 * T, 3 * T, 3 * T);
@@ -94,7 +149,9 @@ export class GameScene extends Phaser.Scene {
 
     const cam = this.cameras.main;
     cam.setBounds(0, 0, WORLD, WORLD);
+    cam.setBackgroundColor(this.tutorial ? 0x000000 : 'rgba(0,0,0,0)');
     cam.startFollow(this.player, true, 0.15, 0.15);
+    this.zoomFactor = this.tutorial ? ZOOM_CLOSE : 1;
     this.fitZoom();
     this.scale.on('resize', this.fitZoom, this);
     this.events.once('shutdown', () => this.scale.off('resize', this.fitZoom, this));
@@ -117,6 +174,14 @@ export class GameScene extends Phaser.Scene {
       this.game.events.off(Phaser.Core.Events.HIDDEN, this.onFocusLost, this);
       this.game.events.off(Phaser.Core.Events.FOCUS, this.releaseKeys, this);
     });
+
+    if (this.tutorial) this.spawnTutorialEnemy();
+    this.moodLabel = import.meta.env.DEV
+      ? this.add
+          .text(0, 0, '', { fontFamily: 'system-ui, sans-serif', fontSize: '9px', color: '#94a3b8', resolution: pixelRatio() * 2 })
+          .setOrigin(0.5, 1)
+          .setDepth(20)
+      : undefined;
 
     this.scene.launch('ui');
     this.ui = this.scene.get('ui') as UIScene;
@@ -149,6 +214,7 @@ export class GameScene extends Phaser.Scene {
     this.frozen = this.paused = true;
     this.physics.pause();
     this.time.paused = true;
+    setPauseMusic(true);
     this.ui.showPause(
       () => this.resumeGame(),
       () => this.scene.restart(),
@@ -158,6 +224,7 @@ export class GameScene extends Phaser.Scene {
   private resumeGame() {
     if (!this.paused) return;
     this.ui.closeMenu();
+    setPauseMusic(false);
     this.frozen = this.paused = false;
     this.physics.resume();
     this.time.paused = false;
@@ -169,11 +236,13 @@ export class GameScene extends Phaser.Scene {
     // The "turn your phone sideways" overlay covers the game; don't play on underneath it.
     if (this.rotatePrompt.matches) return this.pauseGame();
     const dt = delta / 1000;
-    this.elapsed += dt;
+    // The run clock (and so difficulty) starts after the tutorial.
+    if (!this.tutorial) this.elapsed += dt;
 
     this.movePlayer();
     this.steerEnemies(dt);
     this.pullGems();
+    this.updateZoom(dt);
     this.ageBullets(dt);
     this.fire(dt);
     this.fireShotgun(dt);
@@ -183,11 +252,21 @@ export class GameScene extends Phaser.Scene {
     this.player.setAlpha(this.invuln > 0 && Math.floor(this.invuln * 12) % 2 ? 0.35 : 1);
 
     this.ui.updateHud(this.hudState());
+    this.updateMoodLabel();
+  }
+
+  /** Dev only: keeps the temperament label over the tutorial enemy. */
+  private updateMoodLabel() {
+    if (!this.moodLabel) return;
+    const e = this.tutorial ? (this.enemies.getChildren().find((o) => o.active) as Sprite | undefined) : undefined;
+    this.moodLabel.setVisible(!!e);
+    if (e) this.moodLabel.setText(e.getData('mood')).setPosition(e.x, e.y - 16);
   }
 
   private fitZoom() {
     const { width, height } = this.scale;
-    this.cameras.main.setZoom(Math.sqrt((width * height) / VIEW_AREA));
+    this.baseZoom = Math.sqrt((width * height) / VIEW_AREA);
+    this.cameras.main.setZoom(this.baseZoom * this.zoomFactor);
   }
 
   private hudState(): HudState {
@@ -228,17 +307,39 @@ export class GameScene extends Phaser.Scene {
       return this.aimVec.set(world.x - this.player.x, world.y - this.player.y).normalize();
     }
 
-    const target = this.nearestEnemy(range);
+    // No auto-aim during the tutorial: the player has to shoot the first enemy by hand.
+    if (this.tutorial) return null;
+    // Never auto-fire at something the player can't see.
+    const target = this.nearestEnemy(range, this.cameras.main.worldView);
     if (!target) return null;
     return this.aimVec.set(target.x - this.player.x, target.y - this.player.y).normalize();
   }
 
-  private nearestEnemy(range: number): Sprite | null {
+  /**
+   * Tutorial only for now: eases the zoom toward framing the player and the nearest enemy, or close in
+   * when there is none. After the tutorial it eases back to the normal zoom and stays there.
+   */
+  private updateZoom(dt: number) {
+    let target = this.tutorial ? ZOOM_CLOSE : 1;
+    const e = this.tutorial ? this.nearestEnemy(Infinity) : null;
+    if (e) {
+      const { width, height } = this.scale;
+      const dx = Math.abs(e.x - this.player.x) + ZOOM_MARGIN;
+      const dy = Math.abs(e.y - this.player.y) + ZOOM_MARGIN;
+      const fit = Math.min(width / 2 / (this.baseZoom * dx), height / 2 / (this.baseZoom * dy));
+      target = Phaser.Math.Clamp(fit, ZOOM_FAR, ZOOM_CLOSE);
+    }
+    this.zoomFactor += (target - this.zoomFactor) * (1 - Math.exp(-ZOOM_RATE * dt));
+    this.cameras.main.setZoom(this.baseZoom * this.zoomFactor);
+  }
+
+  /** Nearest active enemy within range, optionally only those inside `view`. */
+  private nearestEnemy(range: number, view?: Phaser.Geom.Rectangle): Sprite | null {
     let best: Sprite | null = null;
     let bestD = range * range;
     for (const obj of this.enemies.getChildren()) {
       const e = obj as Sprite;
-      if (!e.active) continue;
+      if (!e.active || (view && !view.contains(e.x, e.y))) continue;
       const d = Phaser.Math.Distance.Squared(e.x, e.y, this.player.x, this.player.y);
       if (d < bestD) {
         bestD = d;
@@ -311,6 +412,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private spawn(dt: number) {
+    if (this.tutorial) return;
     this.spawnTimer -= dt;
     if (this.spawnTimer > 0) return;
     this.spawnTimer = Math.max(0.15, 1.1 - this.elapsed * 0.006);
@@ -337,8 +439,10 @@ export class GameScene extends Phaser.Scene {
     const e = this.enemies.get() as Sprite | null;
     if (!e) return;
     e.enableBody(true, x, y, true, true);
-    e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4);
+    e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false);
     e.setData({
+      mood: 'chase',
+      tint: 0xffffff,
       hp: 3 + this.elapsed / 25,
       speed: Math.min(170, Phaser.Math.Between(70, 100) + this.elapsed * 0.3),
       knock: 0,
@@ -351,9 +455,81 @@ export class GameScene extends Phaser.Scene {
       if (!e.active) continue;
       // While knocked back, keep the shove velocity instead of chasing.
       const knock = e.getData('knock') as number;
+      const mood = e.getData('mood') as Mood;
       if (knock > 0) e.setData('knock', knock - dt);
+      else if (mood === 'curious') e.setVelocity(0, 0);
+      else if (mood === 'skeptical' || mood === 'neutral') this.steerWander(e, dt, mood === 'skeptical');
       else this.physics.moveToObject(e, this.player, e.getData('speed'));
     }
+  }
+
+  /** Ambles about, heading back toward the player if it strays too far. With `flee`, runs from the player when close. */
+  private steerWander(e: Sprite, dt: number, flee: boolean) {
+    const body = e.body as Phaser.Physics.Arcade.Body;
+    const d = Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y);
+    if (flee && d < SKEPTICAL_FLEE_RADIUS) {
+      const away = Phaser.Math.Angle.Between(this.player.x, this.player.y, e.x, e.y);
+      this.physics.velocityFromRotation(away, SKEPTICAL_FLEE_SPEED, body.velocity);
+      e.setData('wander', 0);
+      return;
+    }
+    let t = (e.getData('wander') as number) - dt;
+    if (t <= 0) {
+      t = Phaser.Math.FloatBetween(1, 2);
+      const heading =
+        d > WANDER_LEASH
+          ? Phaser.Math.Angle.Between(e.x, e.y, this.player.x, this.player.y) + Phaser.Math.FloatBetween(-0.6, 0.6)
+          : Math.random() * Math.PI * 2;
+      this.physics.velocityFromRotation(heading, WANDER_SPEED, body.velocity);
+    }
+    e.setData('wander', t);
+  }
+
+  /** Shows an enemy's temperament through its tint and size, eased in when `animate` is set. */
+  private showMood(e: Sprite, animate: boolean) {
+    const look = MOOD_LOOK[e.getData('mood') as Mood];
+    const fromSize = e.scaleX / SPRITE_SCALE;
+    const fromTint = (e.getData('tint') as number | undefined) ?? 0xffffff;
+    const apply = (p: number) => {
+      e.setScale(SPRITE_SCALE * Phaser.Math.Linear(fromSize, look.size, p));
+      e.setData('tint', lerpColor(fromTint, look.tint, p));
+      this.restoreTint(e);
+    };
+    if (!animate) return apply(1);
+    this.tweens.addCounter({ from: 0, to: 1, duration: MOOD_EASE_MS, onUpdate: (tw) => apply(tw.getValue() ?? 1) });
+  }
+
+  /** Puts back the enemy's temperament tint (after a hit flash, for instance). */
+  private restoreTint(e: Sprite) {
+    const tint = (e.getData('tint') as number | undefined) ?? 0xffffff;
+    if (tint === 0xffffff) e.clearTint();
+    else e.setTint(tint);
+  }
+
+  /** The tutorial's single enemy: on screen, with a random temperament. */
+  private spawnTutorialEnemy() {
+    const mood: Mood = Phaser.Utils.Array.GetRandom([...TUTORIAL_MOODS]);
+    const a = Math.random() * Math.PI * 2;
+    const e = this.enemies.get() as Sprite | null;
+    if (!e) return;
+    e.enableBody(true, this.player.x + Math.cos(a) * TUTORIAL_DISTANCE, this.player.y + Math.sin(a) * TUTORIAL_DISTANCE, true, true);
+    // Bounded so a fleeing one can be cornered rather than lost.
+    e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(true);
+    e.setData({ mood, hp: 3, speed: AGGRO_SPEED, knock: 0, wander: 0 });
+    this.showMood(e, false);
+  }
+
+  /** First kill: auto-fire on, the grid fades in, and the normal run begins. */
+  private endTutorial() {
+    if (TUTORIAL_ONLY) {
+      this.time.delayedCall(TUTORIAL_REPEAT_MS, () => this.scene.restart());
+      return;
+    }
+    this.tutorial = false;
+    this.cameras.main.setBackgroundColor('rgba(0,0,0,0)');
+    this.grid.setVisible(true).setAlpha(0);
+    this.tweens.add({ targets: this.grid, alpha: 1, duration: 1200 });
+    this.spawnTimer = 1.5;
   }
 
   private onBulletHit(b: Sprite, e: Sprite) {
@@ -369,10 +545,16 @@ export class GameScene extends Phaser.Scene {
       sfx.kill();
       this.dropGem(e.x, e.y);
       e.disableBody(true, true);
+      if (this.tutorial) this.endTutorial();
     } else {
       sfx.hit();
+      // Shooting the tutorial enemy aggravates it.
+      if (this.tutorial && e.getData('mood') !== 'aggro') {
+        e.setData('mood', 'aggro');
+        this.showMood(e, true);
+      }
       e.setTintFill(0xffffff);
-      this.time.delayedCall(60, () => e.clearTint());
+      this.time.delayedCall(60, () => this.restoreTint(e));
       if (b.getData('pellet')) {
         const body = b.body as Phaser.Physics.Arcade.Body;
         this.physics.velocityFromRotation(body.velocity.angle(), KNOCKBACK_SPEED, (e.body as Phaser.Physics.Arcade.Body).velocity);
@@ -386,7 +568,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onPlayerHit() {
-    if (this.invuln > 0 || this.frozen) return;
+    // Tutorial enemies don't hurt: whether one should is still undecided.
+    if (this.invuln > 0 || this.frozen || this.tutorial) return;
     this.hp -= CONTACT_DAMAGE;
     this.invuln = INVULN_SECONDS;
     this.cameras.main.shake(120, 0.006);
@@ -453,4 +636,10 @@ export class GameScene extends Phaser.Scene {
     const newBest = recordRun({ time: this.elapsed, level: this.level, kills: this.kills });
     this.ui.showGameOver(this.hudState(), newBest, () => this.scene.restart());
   }
+}
+
+/** Blends two 0xRRGGBB colours; p = 0 gives `a`, 1 gives `b`. */
+function lerpColor(a: number, b: number, p: number) {
+  const ch = (shift: number) => Math.round(Phaser.Math.Linear((a >> shift) & 0xff, (b >> shift) & 0xff, p)) << shift;
+  return ch(16) | ch(8) | ch(0);
 }

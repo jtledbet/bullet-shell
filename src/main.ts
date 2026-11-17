@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { audioState, playCounts } from './audio';
+import { musicState } from './music';
 import { pixelRatio } from './display';
 import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
@@ -42,4 +43,4 @@ function fit() {
 game.events.on(Phaser.Core.Events.POST_STEP, fit);
 
 // Dev-only handle for poking at state from the console or test scripts.
-if (import.meta.env.DEV) Object.assign(window, { game, audioDebug: () => ({ state: audioState(), counts: { ...playCounts } }) });
+if (import.meta.env.DEV) Object.assign(window, { game, audioDebug: () => ({ state: audioState(), counts: { ...playCounts }, music: musicState() }) });

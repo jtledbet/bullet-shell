@@ -12,6 +12,25 @@ let noiseBuffer: AudioBuffer | undefined;
 const lastPlayed = new Map<string, number>();
 /** How many times each sound has actually played; read by test scripts. */
 export const playCounts: Record<string, number> = {};
+const unlockListeners: (() => void)[] = [];
+
+/** Runs `fn` after every first-gesture unlock, e.g. to start music requested before audio was allowed. */
+export function onUnlock(fn: () => void) {
+  unlockListeners.push(fn);
+}
+
+/** The context and master output, once a gesture has created them. */
+export const audioOut = () => (ctx && master ? { ctx, master } : null);
+
+/** Half a second of white noise, shared by every noise burst. */
+export function noiseSamples(c: AudioContext) {
+  if (!noiseBuffer) {
+    noiseBuffer = c.createBuffer(1, Math.floor(c.sampleRate / 2), c.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  }
+  return noiseBuffer;
+}
 
 function unlock() {
   if (!ctx) {
@@ -21,6 +40,7 @@ function unlock() {
     master = ctx.createGain();
     master.gain.value = VOLUME;
     master.connect(ctx.destination);
+    for (const fn of unlockListeners) fn();
   }
   // Phones suspend the context again after calls or app switches.
   if (ctx.state !== 'running') void ctx.resume().catch(() => {});
@@ -65,13 +85,8 @@ function tone(at: number, type: OscillatorType, from: number, to: number, dur: n
 /** A burst of low-passed white noise. */
 function noise(at: number, dur: number, vol: number, cutoff: number) {
   const c = ctx!;
-  if (!noiseBuffer) {
-    noiseBuffer = c.createBuffer(1, Math.floor(c.sampleRate / 2), c.sampleRate);
-    const data = noiseBuffer.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
-  }
   const src = c.createBufferSource();
-  src.buffer = noiseBuffer;
+  src.buffer = noiseSamples(c);
   const filter = c.createBiquadFilter();
   filter.type = 'lowpass';
   filter.frequency.value = cutoff;

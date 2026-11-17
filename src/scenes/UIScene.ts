@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { TwinStick } from '../input/TwinStick';
 import { sfx } from '../audio';
 import { pixelRatio } from '../display';
+import { refreshMusic } from '../music';
 import { bestRun, isMuted, setMuted } from '../storage';
 import type { HudState } from './GameScene';
 import type { Upgrade } from '../upgrades';
@@ -69,9 +70,10 @@ export class UIScene extends Phaser.Scene {
       .label(
         this.w / 2,
         this.h - PAD,
+        // Shown at the start of a game, which is always the tutorial, where auto-aim is off.
         touch
-          ? 'Left thumb: move   ·   Right thumb: aim (or let it auto-aim)'
-          : 'WASD: move   ·   Hold mouse: aim (or let it auto-aim)   ·   Esc: pause',
+          ? 'Left thumb: move   ·   Right thumb: aim'
+          : 'WASD: move   ·   Hold mouse: aim   ·   Esc: pause',
         { fontSize: '15px', color: '#94a3b8' },
       )
       .setOrigin(0.5, 1);
@@ -165,6 +167,7 @@ export class UIScene extends Phaser.Scene {
   /** Flips mute and saves it. Bound to M, and to the button on the pause menu. */
   toggleSound() {
     setMuted(!isMuted());
+    refreshMusic();
     sfx.click();
     if (this.menu) this.buildMenu();
   }
