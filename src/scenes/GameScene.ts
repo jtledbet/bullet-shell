@@ -17,7 +17,7 @@ const GRID_SIZE = 4096;
 /** Visible world area held constant across screen sizes, so no device sees more of the arena. */
 const VIEW_AREA = 960 * 540;
 /**
- * Auto zoom (tutorial only for now), as a multiple of the base zoom: close in on the player while no enemy is around,
+ * Tutorial auto zoom, as a multiple of the base zoom: close in on the player while no enemy is around,
  * otherwise zoom out just enough to frame the player and the nearest enemy (down to ZOOM_FAR).
  */
 const ZOOM_CLOSE = 1.6;
@@ -26,6 +26,15 @@ const ZOOM_FAR = 0.6;
 const ZOOM_MARGIN = 60;
 /** How quickly the zoom eases toward its target (per second). */
 const ZOOM_RATE = 2.5;
+/**
+ * Main game: the zoom breathes with pressure, the number of enemies within PRESSURE_RADIUS.
+ * Quiet sits close in; PRESSURE_FULL or more enemies widens to ZOOM_SWARM. Eases slowly, never jumpy.
+ */
+const ZOOM_QUIET = 1.25;
+const ZOOM_SWARM = 0.75;
+const PRESSURE_RADIUS = 500;
+const PRESSURE_FULL = 25;
+const PRESSURE_ZOOM_RATE = 0.6;
 const CONTACT_DAMAGE = 10;
 const INVULN_SECONDS = 0.7;
 /** Draw scale for the oversized textures. Body sizes passed to setCircle are in texture pixels. */
@@ -237,7 +246,7 @@ export class GameScene extends Phaser.Scene {
     const cam = this.cameras.main;
     cam.setBackgroundColor(this.tutorial ? 0x000000 : 'rgba(0,0,0,0)');
     cam.startFollow(this.player, true, 0.15, 0.15);
-    this.zoomFactor = this.tutorial ? ZOOM_CLOSE : 1;
+    this.zoomFactor = this.tutorial ? ZOOM_CLOSE : ZOOM_QUIET;
     this.fitZoom();
     this.scale.on('resize', this.fitZoom, this);
     this.events.once('shutdown', () => this.scale.off('resize', this.fitZoom, this));
@@ -424,12 +433,24 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Tutorial only for now: eases the zoom toward framing the player and the nearest enemy, or close in
-   * when there is none. After the tutorial it eases back to the normal zoom and stays there.
+   * Tutorial: eases the zoom toward framing the player and the nearest seed, or close in when there is
+   * none. Main game: zooms out slowly as the swarm around the player thickens, and back in as it thins.
    */
   private updateZoom(dt: number) {
-    let target = this.tutorial ? ZOOM_CLOSE : 1;
-    const e = this.tutorial ? this.nearestEnemy(Infinity) : null;
+    if (!this.tutorial) {
+      const near = PRESSURE_RADIUS * PRESSURE_RADIUS;
+      let count = 0;
+      for (const obj of this.enemies.getChildren()) {
+        const e = obj as Sprite;
+        if (e.active && Phaser.Math.Distance.Squared(e.x, e.y, this.player.x, this.player.y) < near) count++;
+      }
+      const target = Phaser.Math.Linear(ZOOM_QUIET, ZOOM_SWARM, Math.min(1, count / PRESSURE_FULL));
+      this.zoomFactor += (target - this.zoomFactor) * (1 - Math.exp(-PRESSURE_ZOOM_RATE * dt));
+      this.cameras.main.setZoom(this.baseZoom * this.zoomFactor);
+      return;
+    }
+    let target = ZOOM_CLOSE;
+    const e = this.nearestEnemy(Infinity);
     if (e) {
       const { width, height } = this.scale;
       const dx = Math.abs(e.x - this.player.x) + ZOOM_MARGIN;
