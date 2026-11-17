@@ -54,6 +54,8 @@ export class UIScene extends Phaser.Scene {
   create() {
     this.menu = this.menuBuild = undefined;
     this.cameras.main.setOrigin(0, 0).setZoom(pixelRatio());
+    // Right-click does nothing, including the browser's own menu.
+    this.input.mouse?.disableContextMenu();
     this.scale.on('resize', this.onResize, this);
     this.events.once('shutdown', () => this.scale.off('resize', this.onResize, this));
     this.sticks = new TwinStick(this);
@@ -62,7 +64,9 @@ export class UIScene extends Phaser.Scene {
 
     const pauseBg = this.add.rectangle(0, 0, 44, 44, 0x1e293b, 0.7).setStrokeStyle(2, 0x334155);
     const pauseIcon = this.add.graphics().fillStyle(0xe2e8f0).fillRect(-8, -10, 5, 20).fillRect(3, -10, 5, 20);
-    pauseBg.setInteractive({ useHandCursor: true }).on('pointerup', () => this.onPauseRequested?.());
+    pauseBg.setInteractive({ useHandCursor: true }).on('pointerup', (p: Phaser.Input.Pointer) => {
+      if (p.button === 0) this.onPauseRequested?.();
+    });
     this.pauseBtn = this.add.container(0, 0, [pauseBg, pauseIcon]).setDepth(150);
 
     const touch = this.sys.game.device.input.touch;
@@ -235,8 +239,9 @@ export class UIScene extends Phaser.Scene {
   private makeButton(target: Phaser.GameObjects.Rectangle, action: () => void, keepOpen = false) {
     let armed = false;
     target.setInteractive({ useHandCursor: true });
-    target.on('pointerdown', () => {
-      armed = this.time.now - this.menuOpenedAt > MENU_ARM_MS;
+    target.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      // Left button or touch only.
+      armed = p.button === 0 && this.time.now - this.menuOpenedAt > MENU_ARM_MS;
     });
     target.on('pointerout', () => (armed = false));
     target.on('pointerup', () => {
