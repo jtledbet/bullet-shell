@@ -9,7 +9,11 @@ import { baseStats, rollUpgrades, type Stats } from '../upgrades';
 type Sprite = Phaser.Physics.Arcade.Sprite;
 type Vec = Phaser.Math.Vector2;
 
-const WORLD = 2400;
+/** Where the player starts. Space is endless: there are no walls. */
+const START = 1200;
+/** Background grid: one tile is 64 world px; the tiled area is recentred on the view so it never runs out. */
+const GRID_TILE = 64;
+const GRID_SIZE = 4096;
 /** Visible world area held constant across screen sizes, so no device sees more of the arena. */
 const VIEW_AREA = 960 * 540;
 /**
@@ -131,12 +135,11 @@ export class GameScene extends Phaser.Scene {
     this.physics.resume();
     this.time.paused = false;
 
-    this.physics.world.setBounds(0, 0, WORLD, WORLD);
-    this.grid = this.add.tileSprite(0, 0, WORLD, WORLD, 'grid').setOrigin(0).setTileScale(SPRITE_SCALE);
+    this.grid = this.add.tileSprite(0, 0, GRID_SIZE, GRID_SIZE, 'grid').setOrigin(0).setTileScale(SPRITE_SCALE);
     this.grid.setVisible(!this.tutorial);
 
-    this.player = this.physics.add.sprite(WORLD / 2, WORLD / 2, 'player').setDepth(10).setScale(SPRITE_SCALE);
-    this.player.setCollideWorldBounds(true).setCircle(13 * T, 3 * T, 3 * T);
+    this.player = this.physics.add.sprite(START, START, 'player').setDepth(10).setScale(SPRITE_SCALE);
+    this.player.setCircle(13 * T, 3 * T, 3 * T);
 
     this.enemies = this.physics.add.group({ defaultKey: 'enemy', maxSize: 400 });
     this.bullets = this.physics.add.group({ defaultKey: 'bullet', maxSize: 300 });
@@ -148,7 +151,6 @@ export class GameScene extends Phaser.Scene {
     this.physics.add.overlap(this.player, this.gems, (_p, g) => this.onGem(g as Sprite));
 
     const cam = this.cameras.main;
-    cam.setBounds(0, 0, WORLD, WORLD);
     cam.setBackgroundColor(this.tutorial ? 0x000000 : 'rgba(0,0,0,0)');
     cam.startFollow(this.player, true, 0.15, 0.15);
     this.zoomFactor = this.tutorial ? ZOOM_CLOSE : 1;
@@ -253,6 +255,14 @@ export class GameScene extends Phaser.Scene {
 
     this.ui.updateHud(this.hudState());
     this.updateMoodLabel();
+    this.followGrid();
+  }
+
+  /** Recentres the tiled background on the view, snapped to whole tiles so the pattern doesn't shift. */
+  private followGrid() {
+    const v = this.cameras.main.worldView;
+    const snap = (n: number) => Math.floor((n - GRID_SIZE / 2) / GRID_TILE) * GRID_TILE;
+    this.grid.setPosition(snap(v.centerX), snap(v.centerY));
   }
 
   /** Dev only: keeps the temperament label over the tutorial enemy. */
@@ -424,17 +434,9 @@ export class GameScene extends Phaser.Scene {
   private spawnEnemy() {
     const view = this.cameras.main.worldView;
     const r = Math.hypot(view.width, view.height) / 2 + 40;
-    let x = 0;
-    let y = 0;
-    let onScreen = true;
-    // Near a wall, clamping to the arena can pull a point back on screen (even onto the player); reroll those.
-    for (let i = 0; i < 10 && onScreen; i++) {
-      const a = Math.random() * Math.PI * 2;
-      x = Phaser.Math.Clamp(view.centerX + Math.cos(a) * r, 20, WORLD - 20);
-      y = Phaser.Math.Clamp(view.centerY + Math.sin(a) * r, 20, WORLD - 20);
-      onScreen = view.contains(x, y);
-    }
-    if (onScreen) return;
+    const a = Math.random() * Math.PI * 2;
+    const x = view.centerX + Math.cos(a) * r;
+    const y = view.centerY + Math.sin(a) * r;
 
     const e = this.enemies.get() as Sprite | null;
     if (!e) return;
@@ -513,8 +515,7 @@ export class GameScene extends Phaser.Scene {
     const e = this.enemies.get() as Sprite | null;
     if (!e) return;
     e.enableBody(true, this.player.x + Math.cos(a) * TUTORIAL_DISTANCE, this.player.y + Math.sin(a) * TUTORIAL_DISTANCE, true, true);
-    // Bounded so a fleeing one can be cornered rather than lost.
-    e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(true);
+    e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false);
     e.setData({ mood, hp: 3, speed: AGGRO_SPEED, knock: 0, wander: 0 });
     this.showMood(e, false);
   }
