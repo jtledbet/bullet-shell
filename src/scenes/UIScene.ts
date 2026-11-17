@@ -37,6 +37,8 @@ export class UIScene extends Phaser.Scene {
   /** Rebuilds the open menu's contents for the current screen size. */
   private menuBuild?: () => Phaser.GameObjects.GameObject[];
   private menuOpenedAt = 0;
+  /** Dev builds only: what the tutorial noticed. */
+  private debugText?: Phaser.GameObjects.Text;
 
   constructor() {
     super('ui');
@@ -184,6 +186,14 @@ export class UIScene extends Phaser.Scene {
     const label = this.label(x, y, isMuted() ? 'Sound: off' : 'Sound: on', { fontSize: '16px', color: '#cbd5e1' }).setOrigin(0.5);
     this.makeButton(btn, () => this.toggleSound(), true);
     return [btn, label];
+  }
+
+  /** Dev builds only: a small line at the top showing what the tutorial noticed. */
+  showDebug(text: string) {
+    if (!import.meta.env.DEV) return;
+    this.debugText ??= this.label(0, 12, '', { fontSize: '12px', color: '#94a3b8' }).setOrigin(0.5, 0).setDepth(300);
+    this.debugText.setText(text).setPosition(this.w / 2, 12);
+    console.info('[tutorial]', text);
   }
 
   closeMenu() {

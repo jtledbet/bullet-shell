@@ -71,6 +71,26 @@ const MOOD_LOOK: Record<Mood, { tint: number; size: number }> = {
 /** How long a change of temperament takes to show (ms). */
 const MOOD_EASE_MS = 500;
 
+/** Seconds a tutorial sprite has to stay inside you to be absorbed. */
+const ABSORB_SECONDS = 1.5;
+/** Absorbing an aggro sprite: how much you swell, and how red you turn (overlay opacity), at full anger. */
+const ANGER_SWELL = 0.25;
+const ANGER_RED = 0.55;
+/** Bullet hell: enemies on screen fire a slow aimed shot every few seconds. */
+const ENEMY_SHOT_SPEED = 170;
+const ENEMY_SHOT_LIFE = 4;
+const ENEMY_SHOT_GAP: [number, number] = [1.8, 3.6];
+
+/** What the tutorial noticed about how it was played. */
+interface TutorialNotes {
+  startMood: Mood;
+  /** Seconds into the tutorial of the first shot, or null if none. */
+  firstShot: number | null;
+  shots: number;
+  shotWhileCalm: boolean;
+  seconds: number;
+}
+
 export interface HudState {
   hp: number;
   maxHp: number;
@@ -112,6 +132,13 @@ export class GameScene extends Phaser.Scene {
   private zoomFactor = ZOOM_CLOSE;
   /** The opening tutorial: black screen, one enemy, no auto-fire until it dies. */
   private tutorial = false;
+  /** Decided by the tutorial: killing the sprite leads to bullet hell, absorbing it to bullet heaven. */
+  private mode: 'heaven' | 'hell' = 'heaven';
+  private notes!: TutorialNotes;
+  /** 0..1: how much of an aggro sprite's anger you've absorbed. Shown as swelling and a red overlay. */
+  private anger = 0;
+  private angerOverlay!: Phaser.GameObjects.Image;
+  private enemyBullets!: Phaser.Physics.Arcade.Group;
   /** Dev builds only: names the tutorial enemy's temperament above it. */
   private moodLabel?: Phaser.GameObjects.Text;
   private hadFocus = true;
@@ -131,6 +158,8 @@ export class GameScene extends Phaser.Scene {
     this.frozen = this.paused = false;
     // Every new game opens with the tutorial.
     this.tutorial = true;
+    this.mode = 'heaven';
+    this.notes = { startMood: 'curious', firstShot: null, shots: 0, shotWhileCalm: false, seconds: 0 };
     setPauseMusic(false);
     this.physics.resume();
     this.time.paused = false;
@@ -140,14 +169,18 @@ export class GameScene extends Phaser.Scene {
 
     this.player = this.physics.add.sprite(START, START, 'player').setDepth(10).setScale(SPRITE_SCALE);
     this.player.setCircle(13 * T, 3 * T, 3 * T);
+    this.angerOverlay = this.add.image(START, START, 'player').setTintFill(0xf43f5e).setDepth(11).setAlpha(0);
+    this.setAnger(0);
 
     this.enemies = this.physics.add.group({ defaultKey: 'enemy', maxSize: 400 });
     this.bullets = this.physics.add.group({ defaultKey: 'bullet', maxSize: 300 });
+    this.enemyBullets = this.physics.add.group({ defaultKey: 'bullet', maxSize: 300 });
     this.gems = this.physics.add.group({ defaultKey: 'gem', maxSize: 600 });
 
     this.physics.add.collider(this.enemies, this.enemies);
     this.physics.add.overlap(this.bullets, this.enemies, (b, e) => this.onBulletHit(b as Sprite, e as Sprite));
-    this.physics.add.overlap(this.player, this.enemies, () => this.onPlayerHit());
+    this.physics.add.overlap(this.player, this.enemies, (_p, e) => this.onPlayerTouch(e as Sprite));
+    this.physics.add.overlap(this.player, this.enemyBullets, (_p, b) => this.onEnemyBullet(b as Sprite));
     this.physics.add.overlap(this.player, this.gems, (_p, g) => this.onGem(g as Sprite));
 
     const cam = this.cameras.main;
@@ -240,18 +273,22 @@ export class GameScene extends Phaser.Scene {
     const dt = delta / 1000;
     // The run clock (and so difficulty) starts after the tutorial.
     if (!this.tutorial) this.elapsed += dt;
+    else this.notes.seconds += dt;
 
     this.movePlayer();
     this.steerEnemies(dt);
     this.pullGems();
     this.updateZoom(dt);
-    this.ageBullets(dt);
+    this.ageBullets(this.bullets, dt);
+    this.ageBullets(this.enemyBullets, dt);
+    this.enemiesShoot(dt);
     this.fire(dt);
     this.fireShotgun(dt);
     this.spawn(dt);
 
     if (this.invuln > 0) this.invuln -= dt;
     this.player.setAlpha(this.invuln > 0 && Math.floor(this.invuln * 12) % 2 ? 0.35 : 1);
+    this.angerOverlay.setPosition(this.player.x, this.player.y).setAlpha(ANGER_RED * this.anger * this.player.alpha);
 
     this.ui.updateHud(this.hudState());
     this.updateMoodLabel();
@@ -318,8 +355,8 @@ export class GameScene extends Phaser.Scene {
       return this.aimVec.set(world.x - this.player.x, world.y - this.player.y).normalize();
     }
 
-    // No auto-aim during the tutorial: the player has to shoot the first enemy by hand.
-    if (this.tutorial) return null;
+    // No auto-aim during the tutorial (the first enemy is shot by hand) or in bullet hell (always by hand).
+    if (this.tutorial || this.mode === 'hell') return null;
     // Never auto-fire at something the player can't see.
     const target = this.nearestEnemy(range, this.cameras.main.worldView);
     if (!target) return null;
@@ -366,6 +403,10 @@ export class GameScene extends Phaser.Scene {
     const dir = this.aimDirection(this.stats.range);
     if (!dir) return;
     this.fireCooldown = 1 / this.stats.fireRate;
+    if (this.tutorial) {
+      this.notes.shots++;
+      this.notes.firstShot ??= this.notes.seconds;
+    }
 
     sfx.shoot();
     const n = this.stats.multishot;
@@ -412,8 +453,8 @@ export class GameScene extends Phaser.Scene {
     return true;
   }
 
-  private ageBullets(dt: number) {
-    for (const obj of this.bullets.getChildren()) {
+  private ageBullets(group: Phaser.Physics.Arcade.Group, dt: number) {
+    for (const obj of group.getChildren()) {
       const b = obj as Sprite;
       if (!b.active) continue;
       const life = b.getData('life') - dt;
@@ -442,10 +483,12 @@ export class GameScene extends Phaser.Scene {
     const e = this.enemies.get() as Sprite | null;
     if (!e) return;
     e.enableBody(true, x, y, true, true);
-    e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false);
+    e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false).setAlpha(1);
     e.setData({
       mood: 'chase',
       tint: 0xffffff,
+      absorb: 0,
+      shootCd: Phaser.Math.FloatBetween(...ENEMY_SHOT_GAP),
       hp: 3 + this.elapsed / 25,
       speed: Math.min(170, Phaser.Math.Between(70, 100) + this.elapsed * 0.3),
       knock: 0,
@@ -517,17 +560,29 @@ export class GameScene extends Phaser.Scene {
     if (!e) return;
     e.enableBody(true, this.player.x + Math.cos(a) * TUTORIAL_DISTANCE, this.player.y + Math.sin(a) * TUTORIAL_DISTANCE, true, true);
     e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false);
-    e.setData({ mood, hp: 3, speed: AGGRO_SPEED, knock: 0, wander: 0 });
+    e.setAlpha(1).setData({ mood, hp: 3, speed: AGGRO_SPEED, knock: 0, wander: 0, absorb: 0 });
+    this.notes.startMood = mood;
     this.showMood(e, false);
   }
 
   /** First kill: auto-fire on, the grid fades in, and the normal run begins. */
-  private endTutorial() {
+  private endTutorial(outcome: 'killed' | 'absorbed' = 'absorbed') {
+    const n = this.notes;
+    const readout = [
+      outcome === 'killed' ? 'killed: bullet hell' : 'absorbed: bullet heaven',
+      `was ${n.startMood}`,
+      `first shot ${n.firstShot === null ? 'never' : n.firstShot.toFixed(1) + 's'}`,
+      `${n.shots} shots`,
+      ...(n.shotWhileCalm ? ['shot it while calm'] : []),
+      `${n.seconds.toFixed(1)}s`,
+    ].join('   ·   ');
+    this.ui.showDebug(readout);
     if (TUTORIAL_ONLY) {
       this.time.delayedCall(TUTORIAL_REPEAT_MS, () => this.scene.restart());
       return;
     }
     this.tutorial = false;
+    this.mode = outcome === 'killed' ? 'hell' : 'heaven';
     this.cameras.main.setBackgroundColor('rgba(0,0,0,0)');
     this.grid.setVisible(true).setAlpha(0);
     this.tweens.add({ targets: this.grid, alpha: 1, duration: 1200 });
@@ -547,11 +602,12 @@ export class GameScene extends Phaser.Scene {
       sfx.kill();
       this.dropGem(e.x, e.y);
       e.disableBody(true, true);
-      if (this.tutorial) this.endTutorial();
+      if (this.tutorial) this.endTutorial('killed');
     } else {
       sfx.hit();
       // Shooting the tutorial enemy aggravates it.
       if (this.tutorial && e.getData('mood') !== 'aggro') {
+        this.notes.shotWhileCalm = true;
         e.setData('mood', 'aggro');
         this.showMood(e, true);
       }
@@ -569,8 +625,60 @@ export class GameScene extends Phaser.Scene {
     else b.setData('pierce', pierce - 1);
   }
 
+  /** In the tutorial a sprite inside you is slowly absorbed; afterwards, contact hurts. */
+  private onPlayerTouch(e: Sprite) {
+    if (this.tutorial) this.absorb(e);
+    else this.onPlayerHit();
+  }
+
+  /** Progresses absorbing a tutorial sprite while it's inside you. An angry one swells and reddens you. */
+  private absorb(e: Sprite) {
+    if (this.frozen || !e.active) return;
+    const p = Math.min(1, (e.getData('absorb') as number) + this.game.loop.delta / 1000 / ABSORB_SECONDS);
+    e.setData('absorb', p).setAlpha(1 - 0.7 * p);
+    if (e.getData('mood') === 'aggro') this.setAnger(Math.max(this.anger, p));
+    if (p < 1) return;
+    e.disableBody(true, true);
+    this.endTutorial('absorbed');
+  }
+
+  private setAnger(a: number) {
+    this.anger = a;
+    const scale = SPRITE_SCALE * (1 + ANGER_SWELL * a);
+    this.player.setScale(scale);
+    this.angerOverlay.setScale(scale);
+  }
+
+  /** Bullet hell only: each enemy on screen fires a slow shot at the player every few seconds. */
+  private enemiesShoot(dt: number) {
+    if (this.mode !== 'hell' || this.tutorial) return;
+    const view = this.cameras.main.worldView;
+    for (const obj of this.enemies.getChildren()) {
+      const e = obj as Sprite;
+      if (!e.active) continue;
+      let cd = (e.getData('shootCd') as number) - dt;
+      if (cd <= 0 && view.contains(e.x, e.y)) {
+        cd = Phaser.Math.FloatBetween(...ENEMY_SHOT_GAP);
+        const b = this.enemyBullets.get() as Sprite | null;
+        if (b) {
+          b.enableBody(true, e.x, e.y, true, true);
+          b.setScale(SPRITE_SCALE).setCircle(5 * T, 3 * T, 3 * T).setDepth(5).setTint(0xf43f5e);
+          const angle = Phaser.Math.Angle.Between(e.x, e.y, this.player.x, this.player.y);
+          this.physics.velocityFromRotation(angle, ENEMY_SHOT_SPEED, (b.body as Phaser.Physics.Arcade.Body).velocity);
+          b.setData('life', ENEMY_SHOT_LIFE);
+        }
+      }
+      e.setData('shootCd', cd);
+    }
+  }
+
+  private onEnemyBullet(b: Sprite) {
+    if (!b.active || this.frozen) return;
+    b.disableBody(true, true);
+    this.onPlayerHit();
+  }
+
   private onPlayerHit() {
-    // Tutorial enemies don't hurt: whether one should is still undecided.
     if (this.invuln > 0 || this.frozen || this.tutorial) return;
     this.hp -= CONTACT_DAMAGE;
     this.invuln = INVULN_SECONDS;
