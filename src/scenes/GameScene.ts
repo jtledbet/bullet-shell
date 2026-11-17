@@ -86,6 +86,33 @@ const ENEMY_SHOT_SPEED = 170;
 const ENEMY_SHOT_LIFE = 4;
 const ENEMY_SHOT_GAP: [number, number] = [1.8, 3.6];
 
+/**
+ * What the core becomes from the tutorial, one point per seed:
+ * hard (seeds killed), calm (curious or skeptical seeds let in), rage (aggro seeds let in).
+ */
+type Trait = 'hard' | 'calm' | 'rage';
+/** Hard: each point cuts damage taken by this fraction. */
+const HARD_ARMOR = 0.12;
+/** Hard: width (world px) of the dark edge per point, capped. */
+const HARD_EDGE = 1.2;
+const HARD_EDGE_MAX = 5;
+/** Calm: each point is this chance for a hit to pass straight through, and fades the core this much. */
+const CALM_DODGE = 0.12;
+const CALM_FADE = 0.12;
+const CALM_MIN_ALPHA = 0.45;
+/** After a hit passes through, a short grace so contact isn't re-rolled every frame. */
+const DODGE_GRACE = 0.3;
+/** Rage: each point adds this much to your shot damage. */
+const RAGE_DAMAGE = 0.15;
+/** Trait points stop adding effect past this many. */
+const TRAIT_CAP = 4;
+/** Right-click uses the strongest trait: phase (calm), brace (hard) or burst (rage). */
+const PHASE_SECONDS = 1.2;
+const BRACE_SECONDS = 1.5;
+const BRACE_DAMAGE = 0.2;
+const BURST_SHOTS = 12;
+const ABILITY_COOLDOWN = 6;
+
 /** What the tutorial noticed about how it was played. */
 interface TutorialNotes {
   startMood: Mood;
@@ -150,6 +177,15 @@ export class GameScene extends Phaser.Scene {
   private moodLabels: Phaser.GameObjects.Text[] = [];
   /** Brood seeds scheduled to pop up but not out yet; the tutorial can't end while any are pending. */
   private pendingSeeds = 0;
+  private traits: Record<Trait, number> = { hard: 0, calm: 0, rage: 0 };
+  /** Breaks ties for the strongest trait. */
+  private lastTrait: Trait | null = null;
+  private abilityCooldown = 0;
+  private phaseLeft = 0;
+  private braceLeft = 0;
+  /** Last ability used, for test scripts and the dev readout. */
+  lastAbility: 'phase' | 'brace' | 'burst' | null = null;
+  private hardEdge!: Phaser.GameObjects.Graphics;
   private hadFocus = true;
   /** Same media query that shows #rotate in index.html. */
   private readonly rotatePrompt = window.matchMedia('(orientation: portrait) and (pointer: coarse)');
@@ -170,6 +206,9 @@ export class GameScene extends Phaser.Scene {
     this.mode = 'heaven';
     this.notes = { startMood: 'curious', firstShot: null, shots: 0, shotWhileCalm: false, seconds: 0, killed: 0, absorbed: 0 };
     this.pendingSeeds = 0;
+    this.traits = { hard: 0, calm: 0, rage: 0 };
+    this.lastTrait = this.lastAbility = null;
+    this.abilityCooldown = this.phaseLeft = this.braceLeft = 0;
     this.moodLabels = [];
     setPauseMusic(false);
     this.physics.resume();
@@ -182,6 +221,7 @@ export class GameScene extends Phaser.Scene {
     this.player.setCircle(13 * T, 3 * T, 3 * T);
     this.angerOverlay = this.add.image(START, START, 'player').setTintFill(0xf43f5e).setDepth(11).setAlpha(0);
     this.setAnger(0);
+    this.hardEdge = this.add.graphics().setDepth(12);
 
     this.enemies = this.physics.add.group({ defaultKey: 'enemy', maxSize: 400 });
     this.bullets = this.physics.add.group({ defaultKey: 'bullet', maxSize: 300 });
@@ -207,6 +247,9 @@ export class GameScene extends Phaser.Scene {
     kb.on('keydown-ESC', this.togglePause, this);
     kb.on('keydown-P', this.togglePause, this);
     kb.on('keydown-M', () => this.ui.toggleSound());
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if (p.rightButtonDown()) this.useAbility();
+    });
 
     // Alt-tab or a hidden tab swallows keyup/touchend, which leaves inputs stuck down.
     // Blur events aren't delivered everywhere, so update() also polls document.hasFocus(),
@@ -292,7 +335,12 @@ export class GameScene extends Phaser.Scene {
     this.spawn(dt);
 
     if (this.invuln > 0) this.invuln -= dt;
-    this.player.setAlpha(this.invuln > 0 && Math.floor(this.invuln * 12) % 2 ? 0.35 : 1);
+    this.abilityCooldown = Math.max(0, this.abilityCooldown - dt);
+    this.phaseLeft = Math.max(0, this.phaseLeft - dt);
+    this.braceLeft = Math.max(0, this.braceLeft - dt);
+    const flicker = this.invuln > 0 && Math.floor(this.invuln * 12) % 2 ? 0.35 : 1;
+    this.player.setAlpha(this.ghostAlpha() * flicker * (this.phaseLeft > 0 ? 0.35 : 1));
+    this.drawHardEdge();
     this.angerOverlay.setPosition(this.player.x, this.player.y).setAlpha(ANGER_RED * this.anger * this.player.alpha);
 
     this.ui.updateHud(this.hudState());
@@ -619,6 +667,7 @@ export class GameScene extends Phaser.Scene {
       `first shot ${n.firstShot === null ? 'never' : n.firstShot.toFixed(1) + 's'}`,
       `${n.shots} shots`,
       `killed ${n.killed}, absorbed ${n.absorbed}`,
+      `hard ${this.traits.hard}, calm ${this.traits.calm}, rage ${this.traits.rage}`,
       ...(n.shotWhileCalm ? ['shot it while calm'] : []),
       `${n.seconds.toFixed(1)}s`,
     ].join('   ·   ');
@@ -629,6 +678,7 @@ export class GameScene extends Phaser.Scene {
     }
     this.tutorial = false;
     this.mode = outcome === 'killed' ? 'hell' : 'heaven';
+    this.stats.damage *= 1 + RAGE_DAMAGE * this.trait('rage');
     this.cameras.main.setBackgroundColor('rgba(0,0,0,0)');
     this.grid.setVisible(true).setAlpha(0);
     this.tweens.add({ targets: this.grid, alpha: 1, duration: 1200 });
@@ -650,6 +700,7 @@ export class GameScene extends Phaser.Scene {
       e.disableBody(true, true);
       if (this.tutorial) {
         this.notes.killed++;
+        this.gainTrait('hard');
         this.checkTutorialDone();
       }
     } else {
@@ -689,8 +740,63 @@ export class GameScene extends Phaser.Scene {
     if (p < 1) return;
     e.disableBody(true, true);
     this.notes.absorbed++;
+    this.gainTrait(e.getData('mood') === 'aggro' ? 'rage' : 'calm');
     if (e.getData('mood') === 'aggro' && e.getData('gen') === 0) this.spawnBrood();
     this.checkTutorialDone();
+  }
+
+  /** A trait's effective points, capped. */
+  private trait(t: Trait) {
+    return Math.min(TRAIT_CAP, this.traits[t]);
+  }
+
+  private gainTrait(t: Trait) {
+    this.traits[t]++;
+    this.lastTrait = t;
+  }
+
+  /** Calm fades the core toward a ghost. */
+  private ghostAlpha() {
+    return Math.max(CALM_MIN_ALPHA, 1 - CALM_FADE * this.trait('calm'));
+  }
+
+  /** Hard: a dark steel edge around the core, thicker with each kill; bright while braced. */
+  private drawHardEdge() {
+    const g = this.hardEdge.clear();
+    const hard = this.trait('hard');
+    if (!hard) return;
+    const width = Math.min(HARD_EDGE_MAX, HARD_EDGE * hard);
+    const r = 15 * (this.player.scaleX / SPRITE_SCALE) + width / 2;
+    g.lineStyle(width, this.braceLeft > 0 ? 0xe2e8f0 : 0x64748b, 0.9 * this.player.alpha).strokeCircle(this.player.x, this.player.y, r);
+  }
+
+  /** The strongest trait; ties go to the one gained most recently. None until the core has any. */
+  private strongestTrait(): Trait | null {
+    const best = Math.max(this.traits.hard, this.traits.calm, this.traits.rage);
+    if (best === 0) return null;
+    if (this.lastTrait && this.traits[this.lastTrait] === best) return this.lastTrait;
+    return (['hard', 'calm', 'rage'] as const).find((t) => this.traits[t] === best) ?? null;
+  }
+
+  /** Right-click, after the tutorial: phase (calm), brace (hard) or a ring of shots (rage), then a cooldown. */
+  private useAbility() {
+    if (this.tutorial || this.frozen || this.abilityCooldown > 0) return;
+    const t = this.strongestTrait();
+    if (!t) return;
+    this.abilityCooldown = ABILITY_COOLDOWN;
+    if (t === 'calm') {
+      this.phaseLeft = PHASE_SECONDS;
+      this.lastAbility = 'phase';
+    } else if (t === 'hard') {
+      this.braceLeft = BRACE_SECONDS;
+      this.lastAbility = 'brace';
+    } else {
+      sfx.shoot();
+      for (let i = 0; i < BURST_SHOTS; i++) {
+        this.shoot((i / BURST_SHOTS) * Math.PI * 2, this.stats.bulletSpeed, this.stats.range / this.stats.bulletSpeed + 0.15, false);
+      }
+      this.lastAbility = 'burst';
+    }
   }
 
   private setAnger(a: number) {
@@ -724,14 +830,22 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onEnemyBullet(b: Sprite) {
-    if (!b.active || this.frozen) return;
+    // Phasing: shots pass straight through.
+    if (!b.active || this.frozen || this.phaseLeft > 0) return;
     b.disableBody(true, true);
     this.onPlayerHit();
   }
 
   private onPlayerHit() {
-    if (this.invuln > 0 || this.frozen || this.tutorial) return;
-    this.hp -= CONTACT_DAMAGE;
+    if (this.invuln > 0 || this.frozen || this.tutorial || this.phaseLeft > 0) return;
+    // Calm: some hits pass straight through.
+    if (Math.random() < CALM_DODGE * this.trait('calm')) {
+      this.invuln = DODGE_GRACE;
+      return;
+    }
+    // Hard: hits do less damage, and much less while braced.
+    const armor = 1 - HARD_ARMOR * this.trait('hard');
+    this.hp -= CONTACT_DAMAGE * armor * (this.braceLeft > 0 ? BRACE_DAMAGE : 1);
     this.invuln = INVULN_SECONDS;
     this.cameras.main.shake(120, 0.006);
     if (this.hp <= 0) this.gameOver();
