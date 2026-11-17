@@ -44,15 +44,21 @@ const TUTORIAL_DISTANCE = 260;
 const TUTORIAL_ONLY = new URLSearchParams(window.location.search).has('tutorial');
 /** Sandbox: pause between the kill and the next tutorial (ms). */
 const TUTORIAL_REPEAT_MS = 1200;
-/** Skeptical tutorial enemy flees inside this radius. Skeptical and neutral ones otherwise wander, drifting back past the leash. */
+/** Skeptical seeds flee inside this radius, otherwise wander, drifting back past the leash. */
 const SKEPTICAL_FLEE_RADIUS = 220;
 const SKEPTICAL_FLEE_SPEED = 90;
 const WANDER_SPEED = 35;
 const WANDER_LEASH = 400;
 /** Aggro tutorial enemy's chase speed, including one aggravated by being shot. */
 const AGGRO_SPEED = 80;
-/** Tutorial temperaments, equally likely for now. */
-const TUTORIAL_MOODS = ['curious', 'skeptical', 'neutral', 'aggro'] as const;
+/** Seed temperaments, equally likely for now. */
+const TUTORIAL_MOODS = ['curious', 'skeptical', 'aggro'] as const;
+/** When the first aggro seed is absorbed into the core, a brood of smaller seeds pops up, one of each temperament. */
+const BROOD_DELAYS_MS = [350, 900, 1500];
+const BROOD_DISTANCE: [number, number] = [110, 170];
+const BROOD_SIZE = 0.7;
+const BROOD_HP = 2;
+const POP_MS = 260;
 
 /** How an enemy moves. Normal enemies chase; the tutorial enemy has a temperament, and turns aggro when shot. */
 type Mood = 'chase' | (typeof TUTORIAL_MOODS)[number];
@@ -64,7 +70,6 @@ type Mood = 'chase' | (typeof TUTORIAL_MOODS)[number];
 const MOOD_LOOK: Record<Mood, { tint: number; size: number }> = {
   chase: { tint: 0xffffff, size: 1 },
   curious: { tint: 0xffffff, size: 1 },
-  neutral: { tint: 0xffffff, size: 1 },
   skeptical: { tint: 0xffffff, size: 0.85 },
   aggro: { tint: 0xffa8a8, size: 1 },
 };
@@ -89,6 +94,8 @@ interface TutorialNotes {
   shots: number;
   shotWhileCalm: boolean;
   seconds: number;
+  killed: number;
+  absorbed: number;
 }
 
 export interface HudState {
@@ -140,7 +147,9 @@ export class GameScene extends Phaser.Scene {
   private angerOverlay!: Phaser.GameObjects.Image;
   private enemyBullets!: Phaser.Physics.Arcade.Group;
   /** Dev builds only: names the tutorial enemy's temperament above it. */
-  private moodLabel?: Phaser.GameObjects.Text;
+  private moodLabels: Phaser.GameObjects.Text[] = [];
+  /** Brood seeds scheduled to pop up but not out yet; the tutorial can't end while any are pending. */
+  private pendingSeeds = 0;
   private hadFocus = true;
   /** Same media query that shows #rotate in index.html. */
   private readonly rotatePrompt = window.matchMedia('(orientation: portrait) and (pointer: coarse)');
@@ -159,7 +168,9 @@ export class GameScene extends Phaser.Scene {
     // Every new game opens with the tutorial.
     this.tutorial = true;
     this.mode = 'heaven';
-    this.notes = { startMood: 'curious', firstShot: null, shots: 0, shotWhileCalm: false, seconds: 0 };
+    this.notes = { startMood: 'curious', firstShot: null, shots: 0, shotWhileCalm: false, seconds: 0, killed: 0, absorbed: 0 };
+    this.pendingSeeds = 0;
+    this.moodLabels = [];
     setPauseMusic(false);
     this.physics.resume();
     this.time.paused = false;
@@ -211,12 +222,6 @@ export class GameScene extends Phaser.Scene {
     });
 
     if (this.tutorial) this.spawnTutorialEnemy();
-    this.moodLabel = import.meta.env.DEV
-      ? this.add
-          .text(0, 0, '', { fontFamily: 'system-ui, sans-serif', fontSize: '9px', color: '#94a3b8', resolution: pixelRatio() * 2 })
-          .setOrigin(0.5, 1)
-          .setDepth(20)
-      : undefined;
 
     this.scene.launch('ui');
     this.ui = this.scene.get('ui') as UIScene;
@@ -304,10 +309,17 @@ export class GameScene extends Phaser.Scene {
 
   /** Dev only: keeps the temperament label over the tutorial enemy. */
   private updateMoodLabel() {
-    if (!this.moodLabel) return;
-    const e = this.tutorial ? (this.enemies.getChildren().find((o) => o.active) as Sprite | undefined) : undefined;
-    this.moodLabel.setVisible(!!e);
-    if (e) this.moodLabel.setText(e.getData('mood')).setPosition(e.x, e.y - 16);
+    if (!import.meta.env.DEV) return;
+    const seeds = this.tutorial ? (this.enemies.getChildren().filter((o) => o.active) as Sprite[]) : [];
+    while (this.moodLabels.length < seeds.length) {
+      const style = { fontFamily: 'system-ui, sans-serif', fontSize: '9px', color: '#94a3b8', resolution: pixelRatio() * 2 };
+      this.moodLabels.push(this.add.text(0, 0, '', style).setOrigin(0.5, 1).setDepth(20));
+    }
+    this.moodLabels.forEach((label, i) => {
+      const e = seeds[i];
+      label.setVisible(!!e);
+      if (e) label.setText(e.getData('mood')).setPosition(e.x, e.y - 16 * (e.scaleX / SPRITE_SCALE));
+    });
   }
 
   private fitZoom() {
@@ -504,7 +516,7 @@ export class GameScene extends Phaser.Scene {
       const mood = e.getData('mood') as Mood;
       if (knock > 0) e.setData('knock', knock - dt);
       else if (mood === 'curious') e.setVelocity(0, 0);
-      else if (mood === 'skeptical' || mood === 'neutral') this.steerWander(e, dt, mood === 'skeptical');
+      else if (mood === 'skeptical') this.steerWander(e, dt, true);
       else this.physics.moveToObject(e, this.player, e.getData('speed'));
     }
   }
@@ -534,10 +546,11 @@ export class GameScene extends Phaser.Scene {
   /** Shows an enemy's temperament through its tint and size, eased in when `animate` is set. */
   private showMood(e: Sprite, animate: boolean) {
     const look = MOOD_LOOK[e.getData('mood') as Mood];
+    const size = look.size * ((e.getData('baseSize') as number | undefined) ?? 1);
     const fromSize = e.scaleX / SPRITE_SCALE;
     const fromTint = (e.getData('tint') as number | undefined) ?? 0xffffff;
     const apply = (p: number) => {
-      e.setScale(SPRITE_SCALE * Phaser.Math.Linear(fromSize, look.size, p));
+      e.setScale(SPRITE_SCALE * Phaser.Math.Linear(fromSize, size, p));
       e.setData('tint', lerpColor(fromTint, look.tint, p));
       this.restoreTint(e);
     };
@@ -552,17 +565,49 @@ export class GameScene extends Phaser.Scene {
     else e.setTint(tint);
   }
 
-  /** The tutorial's single enemy: on screen, with a random temperament. */
+  /** The tutorial's first seed: on screen, with a random temperament. */
   private spawnTutorialEnemy() {
     const mood: Mood = Phaser.Utils.Array.GetRandom([...TUTORIAL_MOODS]);
     const a = Math.random() * Math.PI * 2;
+    this.spawnSeed(mood, this.player.x + Math.cos(a) * TUTORIAL_DISTANCE, this.player.y + Math.sin(a) * TUTORIAL_DISTANCE, 0);
+    this.notes.startMood = mood;
+  }
+
+  /** A tutorial seed. Generation 0 is the first seed; generation 1 is a smaller brood seed that pops in. */
+  private spawnSeed(mood: Mood, x: number, y: number, gen: number) {
     const e = this.enemies.get() as Sprite | null;
     if (!e) return;
-    e.enableBody(true, this.player.x + Math.cos(a) * TUTORIAL_DISTANCE, this.player.y + Math.sin(a) * TUTORIAL_DISTANCE, true, true);
-    e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false);
-    e.setAlpha(1).setData({ mood, hp: 3, speed: AGGRO_SPEED, knock: 0, wander: 0, absorb: 0 });
-    this.notes.startMood = mood;
+    e.enableBody(true, x, y, true, true);
+    e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false).setAlpha(1);
+    e.setData({ mood, gen, baseSize: gen ? BROOD_SIZE : 1, hp: gen ? BROOD_HP : 3, speed: AGGRO_SPEED, knock: 0, wander: 0, absorb: 0, tint: 0xffffff });
     this.showMood(e, false);
+    if (!gen) return;
+    const size = e.scaleX;
+    e.setScale(0);
+    this.tweens.add({ targets: e, scale: size, duration: POP_MS, ease: 'Back.Out' });
+  }
+
+  /** The first aggro seed, absorbed: three smaller seeds pop up around the core one at a time, one of each temperament. */
+  private spawnBrood() {
+    const moods = Phaser.Utils.Array.Shuffle([...TUTORIAL_MOODS]);
+    const start = Math.random() * Math.PI * 2;
+    this.pendingSeeds += moods.length;
+    moods.forEach((mood, i) => {
+      this.time.delayedCall(BROOD_DELAYS_MS[i], () => {
+        this.pendingSeeds--;
+        if (!this.tutorial) return;
+        const a = start + (i * Math.PI * 2) / moods.length + Phaser.Math.FloatBetween(-0.4, 0.4);
+        const d = Phaser.Math.FloatBetween(...BROOD_DISTANCE);
+        this.spawnSeed(mood, this.player.x + Math.cos(a) * d, this.player.y + Math.sin(a) * d, 1);
+      });
+    });
+  }
+
+  /** The tutorial ends once every seed is killed or absorbed. Mostly killed: bullet hell; otherwise bullet heaven. */
+  private checkTutorialDone() {
+    if (!this.tutorial || this.pendingSeeds > 0) return;
+    if (this.enemies.getChildren().some((o) => o.active)) return;
+    this.endTutorial(this.notes.killed > this.notes.absorbed ? 'killed' : 'absorbed');
   }
 
   /** First kill: auto-fire on, the grid fades in, and the normal run begins. */
@@ -573,6 +618,7 @@ export class GameScene extends Phaser.Scene {
       `was ${n.startMood}`,
       `first shot ${n.firstShot === null ? 'never' : n.firstShot.toFixed(1) + 's'}`,
       `${n.shots} shots`,
+      `killed ${n.killed}, absorbed ${n.absorbed}`,
       ...(n.shotWhileCalm ? ['shot it while calm'] : []),
       `${n.seconds.toFixed(1)}s`,
     ].join('   ·   ');
@@ -602,7 +648,10 @@ export class GameScene extends Phaser.Scene {
       sfx.kill();
       this.dropGem(e.x, e.y);
       e.disableBody(true, true);
-      if (this.tutorial) this.endTutorial('killed');
+      if (this.tutorial) {
+        this.notes.killed++;
+        this.checkTutorialDone();
+      }
     } else {
       sfx.hit();
       // Shooting the tutorial enemy aggravates it.
@@ -639,7 +688,9 @@ export class GameScene extends Phaser.Scene {
     if (e.getData('mood') === 'aggro') this.setAnger(Math.max(this.anger, p));
     if (p < 1) return;
     e.disableBody(true, true);
-    this.endTutorial('absorbed');
+    this.notes.absorbed++;
+    if (e.getData('mood') === 'aggro' && e.getData('gen') === 0) this.spawnBrood();
+    this.checkTutorialDone();
   }
 
   private setAnger(a: number) {
