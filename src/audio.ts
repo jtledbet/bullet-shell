@@ -106,6 +106,12 @@ export const sfx = {
     tone(t, 'sawtooth', 180, 55, 0.28, 0.22);
     noise(t, 0.2, 0.2, 900);
   },
+  shotgun() {
+    const t = begin('shotgun', 0.1);
+    if (t === null) return;
+    noise(t, 0.18, 0.28, 2400);
+    tone(t, 'sine', vary(150), 45, 0.16, 0.25);
+  },
   levelUp() {
     const t = begin('levelUp', 0.3);
     if (t === null) return;

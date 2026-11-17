@@ -16,6 +16,13 @@ const INVULN_SECONDS = 0.7;
 /** Draw scale for the oversized textures. Body sizes passed to setCircle are in texture pixels. */
 const SPRITE_SCALE = 1 / TEX_SCALE;
 const T = TEX_SCALE;
+/** Shotgun reach (world px) and how far apart its outermost pellets fly (radians). */
+const SHOTGUN_RANGE = 230;
+const SHOTGUN_SPREAD = 0.75;
+const SHOTGUN_SPEED = 620;
+/** Seconds an enemy hit by a pellet is pushed back instead of chasing. */
+const KNOCKBACK_SECONDS = 0.12;
+const KNOCKBACK_SPEED = 260;
 
 export interface HudState {
   hp: number;
@@ -45,6 +52,7 @@ export class GameScene extends Phaser.Scene {
   private kills = 0;
   private elapsed = 0;
   private fireCooldown = 0;
+  private shotgunCooldown = 0;
   private spawnTimer = 0;
   private invuln = 0;
   private pendingLevels = 0;
@@ -62,7 +70,7 @@ export class GameScene extends Phaser.Scene {
   create() {
     this.stats = baseStats();
     this.hp = this.stats.maxHp;
-    this.xp = this.kills = this.elapsed = this.fireCooldown = this.invuln = this.pendingLevels = 0;
+    this.xp = this.kills = this.elapsed = this.fireCooldown = this.shotgunCooldown = this.invuln = this.pendingLevels = 0;
     this.level = 1;
     this.spawnTimer = 1;
     this.frozen = this.paused = false;
@@ -164,10 +172,11 @@ export class GameScene extends Phaser.Scene {
     this.elapsed += dt;
 
     this.movePlayer();
-    this.steerEnemies();
+    this.steerEnemies(dt);
     this.pullGems();
     this.ageBullets(dt);
     this.fire(dt);
+    this.fireShotgun(dt);
     this.spawn(dt);
 
     if (this.invuln > 0) this.invuln -= dt;
@@ -209,7 +218,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Manual aim (right stick or held mouse) wins; otherwise auto-aim at the nearest enemy in range. */
-  private aimDirection(): Vec | null {
+  private aimDirection(range: number): Vec | null {
     const sticks = this.ui.sticks;
     if (sticks?.aiming && sticks.aim.lengthSq() > 0) return this.aimVec.copy(sticks.aim).normalize();
 
@@ -219,7 +228,7 @@ export class GameScene extends Phaser.Scene {
       return this.aimVec.set(world.x - this.player.x, world.y - this.player.y).normalize();
     }
 
-    const target = this.nearestEnemy(this.stats.range);
+    const target = this.nearestEnemy(range);
     if (!target) return null;
     return this.aimVec.set(target.x - this.player.x, target.y - this.player.y).normalize();
   }
@@ -242,7 +251,7 @@ export class GameScene extends Phaser.Scene {
   private fire(dt: number) {
     this.fireCooldown -= dt;
     if (this.fireCooldown > 0) return;
-    const dir = this.aimDirection();
+    const dir = this.aimDirection(this.stats.range);
     if (!dir) return;
     this.fireCooldown = 1 / this.stats.fireRate;
 
@@ -250,17 +259,45 @@ export class GameScene extends Phaser.Scene {
     const n = this.stats.multishot;
     const base = dir.angle();
     for (let i = 0; i < n; i++) {
-      const b = this.bullets.get() as Sprite | null;
-      if (!b) break;
-      b.enableBody(true, this.player.x, this.player.y, true, true);
-      b.setScale(SPRITE_SCALE).setCircle(5 * T, 3 * T, 3 * T).setDepth(5);
       const angle = base + (i - (n - 1) / 2) * 0.18;
-      this.physics.velocityFromRotation(angle, this.stats.bulletSpeed, (b.body as Phaser.Physics.Arcade.Body).velocity);
-      // Reuse the pooled bullet's hit set rather than allocating one per shot.
-      const hits = (b.getData('hits') as Set<Sprite> | undefined) ?? new Set<Sprite>();
-      hits.clear();
-      b.setData({ pierce: this.stats.pierce, life: this.stats.range / this.stats.bulletSpeed + 0.15, hits });
+      if (!this.shoot(angle, this.stats.bulletSpeed, this.stats.range / this.stats.bulletSpeed + 0.15, false)) break;
     }
+  }
+
+  /** The shotgun fires on its own cooldown, only at enemies within its short reach unless aimed by hand. */
+  private fireShotgun(dt: number) {
+    const n = this.stats.shotgunPellets;
+    if (n === 0) return;
+    this.shotgunCooldown -= dt;
+    if (this.shotgunCooldown > 0) return;
+    const dir = this.aimDirection(SHOTGUN_RANGE);
+    if (!dir) return;
+    this.shotgunCooldown = 1 / this.stats.shotgunRate;
+
+    sfx.shotgun();
+    const base = dir.angle();
+    for (let i = 0; i < n; i++) {
+      // Evenly fanned, with a little jitter so blasts don't look stamped.
+      const angle = base + (i / (n - 1) - 0.5) * SHOTGUN_SPREAD + Phaser.Math.FloatBetween(-0.04, 0.04);
+      const speed = SHOTGUN_SPEED * Phaser.Math.FloatBetween(0.85, 1.1);
+      if (!this.shoot(angle, speed, SHOTGUN_RANGE / speed, true)) break;
+    }
+  }
+
+  /** Launches one pooled projectile. Returns false when the pool is exhausted. */
+  private shoot(angle: number, speed: number, life: number, pellet: boolean) {
+    const b = this.bullets.get() as Sprite | null;
+    if (!b) return false;
+    b.enableBody(true, this.player.x, this.player.y, true, true);
+    b.setScale(pellet ? SPRITE_SCALE * 0.7 : SPRITE_SCALE).setCircle(5 * T, 3 * T, 3 * T).setDepth(5);
+    if (pellet) b.setTint(0xfb923c);
+    else b.clearTint();
+    this.physics.velocityFromRotation(angle, speed, (b.body as Phaser.Physics.Arcade.Body).velocity);
+    // Reuse the pooled bullet's hit set rather than allocating one per shot.
+    const hits = (b.getData('hits') as Set<Sprite> | undefined) ?? new Set<Sprite>();
+    hits.clear();
+    b.setData({ pierce: this.stats.pierce, life, hits, pellet });
+    return true;
   }
 
   private ageBullets(dt: number) {
@@ -304,13 +341,18 @@ export class GameScene extends Phaser.Scene {
     e.setData({
       hp: 3 + this.elapsed / 25,
       speed: Math.min(170, Phaser.Math.Between(70, 100) + this.elapsed * 0.3),
+      knock: 0,
     });
   }
 
-  private steerEnemies() {
+  private steerEnemies(dt: number) {
     for (const obj of this.enemies.getChildren()) {
       const e = obj as Sprite;
-      if (e.active) this.physics.moveToObject(e, this.player, e.getData('speed'));
+      if (!e.active) continue;
+      // While knocked back, keep the shove velocity instead of chasing.
+      const knock = e.getData('knock') as number;
+      if (knock > 0) e.setData('knock', knock - dt);
+      else this.physics.moveToObject(e, this.player, e.getData('speed'));
     }
   }
 
@@ -331,6 +373,11 @@ export class GameScene extends Phaser.Scene {
       sfx.hit();
       e.setTintFill(0xffffff);
       this.time.delayedCall(60, () => e.clearTint());
+      if (b.getData('pellet')) {
+        const body = b.body as Phaser.Physics.Arcade.Body;
+        this.physics.velocityFromRotation(body.velocity.angle(), KNOCKBACK_SPEED, (e.body as Phaser.Physics.Arcade.Body).velocity);
+        e.setData('knock', KNOCKBACK_SECONDS);
+      }
     }
 
     const pierce = b.getData('pierce');
@@ -385,7 +432,7 @@ export class GameScene extends Phaser.Scene {
     this.physics.pause();
     this.ui.updateHud(this.hudState());
     sfx.levelUp();
-    this.ui.showLevelUp(rollUpgrades(3), (upgrade) => {
+    this.ui.showLevelUp(rollUpgrades(3, this.stats), (upgrade) => {
       upgrade.apply(this.stats, { heal: (n) => (this.hp = Math.min(this.stats.maxHp, this.hp + n)) });
       this.pendingLevels--;
       if (this.pendingLevels > 0) {

@@ -8,6 +8,10 @@ export interface Stats {
   pierce: number;
   magnet: number;
   maxHp: number;
+  /** Shotgun pellets per blast; 0 until the Shotgun card is taken. */
+  shotgunPellets: number;
+  /** Shotgun blasts per second. */
+  shotgunRate: number;
 }
 
 export const baseStats = (): Stats => ({
@@ -20,6 +24,8 @@ export const baseStats = (): Stats => ({
   pierce: 0,
   magnet: 90,
   maxHp: 100,
+  shotgunPellets: 0,
+  shotgunRate: 0.9,
 });
 
 export interface UpgradeContext {
@@ -30,6 +36,8 @@ export interface Upgrade {
   name: string;
   desc: string;
   apply(stats: Stats, ctx: UpgradeContext): void;
+  /** Offered only when this returns true (default: always). */
+  available?(stats: Stats): boolean;
 }
 
 export const UPGRADES: Upgrade[] = [
@@ -56,10 +64,25 @@ export const UPGRADES: Upgrade[] = [
     },
   },
   { name: 'Field Medic', desc: 'Heal 40 HP', apply: (_s, ctx) => ctx.heal(40) },
+  {
+    name: 'Shotgun',
+    desc: 'New weapon: a close-range blast of 5 pellets that knocks enemies back',
+    apply: (s) => (s.shotgunPellets = 5),
+    available: (s) => s.shotgunPellets === 0,
+  },
+  {
+    name: 'Buckshot',
+    desc: 'Shotgun: +2 pellets and +20% fire rate',
+    apply: (s) => {
+      s.shotgunPellets += 2;
+      s.shotgunRate *= 1.2;
+    },
+    available: (s) => s.shotgunPellets > 0,
+  },
 ];
 
-export function rollUpgrades(count: number): Upgrade[] {
-  const pool = [...UPGRADES];
+export function rollUpgrades(count: number, stats: Stats): Upgrade[] {
+  const pool = UPGRADES.filter((u) => u.available?.(stats) ?? true);
   for (let i = pool.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
