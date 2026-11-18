@@ -64,9 +64,12 @@ const KNOCKBACK_FAR = 200;
 const KNOCKBACK_MAX = 900;
 /** Each pellet passes through this many enemies before stopping (on top of any pierce upgrades). */
 const SHOTGUN_PIERCE = 1;
-/** A blast that connects: the camera kicks and the world holds still for a moment. */
-const BLAST_SHAKE_MS = 90;
-const BLAST_SHAKE = 0.005;
+/**
+ * A blast that connects: the background (not you, not the enemies) jolts a few pixels along
+ * the blast and settles, and the world holds still for a moment. The camera itself stays put.
+ */
+const BLAST_KICK_MS = 110;
+const BLAST_KICK_PX = 3;
 const HIT_STOP_MS = 50;
 /** Tutorial: how far from the player its one enemy appears. */
 const TUTORIAL_DISTANCE = 260;
@@ -192,6 +195,9 @@ export class GameScene extends Phaser.Scene {
   private impactBlast = -1;
   /** Seconds left in a hit-stop: the world holds still. */
   private hitStop = 0;
+  /** Seconds left in the background's jolt, and which way it goes. */
+  private gridKick = 0;
+  private blastAngle = 0;
   private spawnTimer = 0;
   private invuln = 0;
   private pendingLevels = 0;
@@ -237,7 +243,7 @@ export class GameScene extends Phaser.Scene {
     this.stats = baseStats();
     this.hp = this.stats.maxHp;
     this.xp = this.kills = this.elapsed = this.fireCooldown = this.shotgunCooldown = this.invuln = this.pendingLevels = 0;
-    this.blastId = this.hitStop = 0;
+    this.blastId = this.hitStop = this.gridKick = 0;
     this.impactBlast = -1;
     this.level = 1;
     this.spawnTimer = 1;
@@ -406,14 +412,17 @@ export class GameScene extends Phaser.Scene {
 
     this.ui.updateHud(this.hudState());
     this.updateMoodLabel();
-    this.followGrid();
+    this.followGrid(dt);
   }
 
   /** Recentres the tiled background on the view, snapped to whole tiles so the pattern doesn't shift. */
-  private followGrid() {
+  private followGrid(dt = 0) {
     const v = this.cameras.main.worldView;
     const snap = (n: number) => Math.floor((n - GRID_SIZE / 2) / GRID_TILE) * GRID_TILE;
-    this.grid.setPosition(snap(v.centerX), snap(v.centerY));
+    this.gridKick = Math.max(0, this.gridKick - dt);
+    // The blast's jolt: pushed along the blast, easing back to rest.
+    const k = BLAST_KICK_PX * (this.gridKick / (BLAST_KICK_MS / 1000)) ** 2;
+    this.grid.setPosition(snap(v.centerX) + Math.cos(this.blastAngle) * k, snap(v.centerY) + Math.sin(this.blastAngle) * k);
   }
 
   /** Dev builds or `?labels`: keeps a temperament label over each tutorial seed. */
@@ -562,6 +571,7 @@ export class GameScene extends Phaser.Scene {
 
     sfx.shotgun();
     const base = dir.angle();
+    this.blastAngle = base;
     for (let i = 0; i < n; i++) {
       // Evenly fanned, with a little jitter so blasts don't look stamped.
       const angle = base + (i / (n - 1) - 0.5) * SHOTGUN_SPREAD + Phaser.Math.FloatBetween(-0.04, 0.04);
@@ -816,7 +826,8 @@ export class GameScene extends Phaser.Scene {
   private blastImpact(blast: number) {
     if (blast === this.impactBlast) return;
     this.impactBlast = blast;
-    this.cameras.main.shake(BLAST_SHAKE_MS, BLAST_SHAKE);
+    this.gridKick = BLAST_KICK_MS / 1000;
+    this.followGrid();
     if (this.hitStop > 0) return;
     this.hitStop = HIT_STOP_MS / 1000;
     this.physics.pause();
