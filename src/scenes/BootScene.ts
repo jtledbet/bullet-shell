@@ -12,10 +12,20 @@ export class BootScene extends Phaser.Scene {
     // Sizes below are world units; everything is drawn S times larger (see TEX_SCALE).
     const tex = (key: string, size: number) => g.generateTexture(key, size * S, size * S).clear();
 
-    // The core: a cool violet, well clear of the enemies' reds.
-    g.fillStyle(0xa78bfa).fillCircle(16 * S, 16 * S, 13 * S);
-    g.lineStyle(3 * S, 0xffffff).strokeCircle(16 * S, 16 * S, 13 * S);
-    tex('player', 32);
+    // The player: a ball of violet plasma, white-hot at the centre, no outline.
+    this.glow('player', 32, [
+      [0, 'rgba(255,255,255,1)'],
+      [0.1, 'rgba(237,233,254,1)'],
+      [0.4, 'rgba(167,139,250,1)'],
+      [0.78, 'rgba(139,92,246,0.5)'],
+      [1, 'rgba(124,58,237,0)'],
+    ]);
+    // Softer wisps that roil around it and trail behind it.
+    this.glow('plasma', 32, [
+      [0, 'rgba(167,139,250,0.75)'],
+      [0.5, 'rgba(139,92,246,0.3)'],
+      [1, 'rgba(124,58,237,0)'],
+    ]);
 
     g.fillStyle(0xf43f5e).fillCircle(16 * S, 16 * S, 12 * S);
     g.fillStyle(0x020617).fillCircle(12 * S, 13 * S, 2.5 * S).fillCircle(20 * S, 13 * S, 2.5 * S);
@@ -34,5 +44,17 @@ export class BootScene extends Phaser.Scene {
 
     g.destroy();
     this.scene.start('game');
+  }
+
+  /** A soft round glow (radial gradient), `size` world units across. */
+  private glow(key: string, size: number, stops: [number, string][]) {
+    const px = size * S;
+    const canvas = this.textures.createCanvas(key, px, px)!;
+    const ctx = canvas.getContext();
+    const grad = ctx.createRadialGradient(px / 2, px / 2, 0, px / 2, px / 2, px / 2);
+    for (const [at, colour] of stops) grad.addColorStop(at, colour);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, px, px);
+    canvas.refresh();
   }
 }

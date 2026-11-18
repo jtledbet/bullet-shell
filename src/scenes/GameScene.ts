@@ -44,6 +44,10 @@ const T = TEX_SCALE;
 const SHOTGUN_RANGE = 230;
 const SHOTGUN_SPREAD = 0.75;
 const SHOTGUN_SPEED = 620;
+/** The player's plasma: wisps roiling around the centre, and a trail while moving. */
+const PLASMA_WISPS = 4;
+const TRAIL_MIN_SPEED = 20;
+
 /** Enemies vary in toughness around the current base health, by up to this factor either way. */
 const TOUGHNESS_SPREAD: [number, number] = [0.75, 1.35];
 /** Shading by toughness: the base red at this much health or less, darkest at HP_DARKEST and up. */
@@ -219,6 +223,8 @@ export class GameScene extends Phaser.Scene {
   /** Last ability used, for test scripts and the dev readout. */
   lastAbility: 'phase' | 'brace' | 'burst' | null = null;
   private hardEdge!: Phaser.GameObjects.Graphics;
+  private wisps: Phaser.GameObjects.Image[] = [];
+  private trail!: Phaser.GameObjects.Particles.ParticleEmitter;
   private hadFocus = true;
   /** Same media query that shows #rotate in index.html. */
   private readonly rotatePrompt = window.matchMedia('(orientation: portrait) and (pointer: coarse)');
@@ -256,6 +262,18 @@ export class GameScene extends Phaser.Scene {
     this.player = this.physics.add.sprite(START, START, 'player').setDepth(10).setScale(SPRITE_SCALE);
     this.player.setCircle(13 * T, 3 * T, 3 * T);
     this.angerOverlay = this.add.image(START, START, 'player').setTintFill(0xf43f5e).setDepth(11).setAlpha(0);
+    this.wisps = Array.from({ length: PLASMA_WISPS }, (_, i) =>
+      this.add.image(START, START, 'plasma').setBlendMode(Phaser.BlendModes.ADD).setDepth(10.5).setData('phase', (i / PLASMA_WISPS) * Math.PI * 2),
+    );
+    this.trail = this.add.particles(0, 0, 'plasma', {
+      follow: this.player,
+      lifespan: 380,
+      frequency: 14,
+      scale: { start: 0.7 * SPRITE_SCALE, end: 0.1 * SPRITE_SCALE },
+      alpha: { start: 0.4, end: 0 },
+      blendMode: Phaser.BlendModes.ADD,
+      emitting: false,
+    }).setDepth(9);
     this.setAnger(0);
     this.hardEdge = this.add.graphics().setDepth(12);
 
@@ -383,6 +401,7 @@ export class GameScene extends Phaser.Scene {
     const flicker = this.invuln > 0 && Math.floor(this.invuln * 12) % 2 ? 0.35 : 1;
     this.player.setAlpha(this.ghostAlpha() * flicker * (this.phaseLeft > 0 ? 0.35 : 1));
     this.drawHardEdge();
+    this.drawPlasma();
     this.angerOverlay.setPosition(this.player.x, this.player.y).setAlpha(ANGER_RED * this.anger * this.player.alpha);
 
     this.ui.updateHud(this.hudState());
@@ -836,6 +855,23 @@ export class GameScene extends Phaser.Scene {
   /** Calm fades the core toward a ghost. */
   private ghostAlpha() {
     return Math.max(CALM_MIN_ALPHA, 1 - CALM_FADE * this.trait('calm'));
+  }
+
+  /** Wisps drift around the centre at different speeds, pulsing in size and brightness; a trail follows while moving. */
+  private drawPlasma() {
+    const size = this.player.scaleX / SPRITE_SCALE;
+    const t = this.time.now / 1000;
+    this.wisps.forEach((w, i) => {
+      const ph = w.getData('phase') as number;
+      const a = ph + t * (0.55 + 0.3 * i) * (i % 2 ? -1 : 1);
+      const r = (7 + 2.5 * Math.sin(t * 1.7 + ph * 2)) * size;
+      w.setPosition(this.player.x + Math.cos(a) * r, this.player.y + Math.sin(a) * r);
+      w.setScale(SPRITE_SCALE * size * (0.5 + 0.12 * Math.sin(t * 2.3 + ph)));
+      w.setAlpha(this.player.alpha * (0.45 + 0.2 * Math.sin(t * 3.1 + ph * 1.3)));
+    });
+    const v = (this.player.body as Phaser.Physics.Arcade.Body).velocity;
+    this.trail.emitting = v.length() > TRAIL_MIN_SPEED;
+    this.trail.setAlpha(this.player.alpha);
   }
 
   /** Hard: a dark steel edge around the core, thicker with each kill; bright while braced. */
