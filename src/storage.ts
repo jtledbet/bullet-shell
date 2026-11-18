@@ -19,6 +19,7 @@ interface Save {
   /** Developer extras on this device (turned on with `?dev` in the URL), and the auto shotgun among them. */
   dev: boolean;
   devShotgun: boolean;
+  devFlare: boolean;
 }
 
 function validBest(b: unknown): BestRun | null {
@@ -36,9 +37,10 @@ function read(): Save {
       best: validBest(parsed?.best),
       dev: parsed?.dev === true,
       devShotgun: parsed?.devShotgun === true,
+      devFlare: parsed?.devFlare === true,
     };
   } catch {
-    return { muted: false, labels: false, best: null, dev: false, devShotgun: false };
+    return { muted: false, labels: false, best: null, dev: false, devShotgun: false, devFlare: false };
   }
 }
 
@@ -77,6 +79,13 @@ export const devShotgunOn = () => save.dev && save.devShotgun;
 
 export function setDevShotgun(on: boolean) {
   save.devShotgun = on;
+  write();
+}
+
+export const devFlareOn = () => save.dev && save.devFlare;
+
+export function setDevFlare(on: boolean) {
+  save.devFlare = on;
   write();
 }
 

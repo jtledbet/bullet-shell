@@ -4,7 +4,7 @@ import { sfx } from '../audio';
 import { pixelRatio } from '../display';
 import { canFullscreen, toggleFullscreen } from '../fullscreen';
 import { refreshMusic } from '../music';
-import { bestRun, devOn, devShotgunOn, isMuted, labelsOn, setDevShotgun, setLabels, setMuted } from '../storage';
+import { bestRun, devFlareOn, devOn, devShotgunOn, isMuted, labelsOn, setDevFlare, setDevShotgun, setLabels, setMuted } from '../storage';
 import { POWER_NAMES, TRAIT_COLOURS } from '../traits';
 import type { HudState } from './GameScene';
 import type { Upgrade } from '../upgrades';
@@ -51,6 +51,7 @@ export class UIScene extends Phaser.Scene {
   onAbilityRequested?: () => void;
   /** Developer extra: the pause menu's shotgun switch was flipped. */
   onDevShotgun?: (on: boolean) => void;
+  onDevFlare?: (on: boolean) => void;
   private ability!: Phaser.GameObjects.Container;
   private abilityGfx!: Phaser.GameObjects.Graphics;
   /** With labels on: the power's name beside its button. */
@@ -380,7 +381,7 @@ export class UIScene extends Phaser.Scene {
         ...this.buildOrb(),
         ...this.soundButton(),
         ...this.labelsButton(),
-        ...(devOn() ? this.devShotgunButton() : []),
+        ...(devOn() ? [...this.devShotgunButton(), ...this.devFlareButton()] : []),
         this.label(this.w - PAD, this.h - 14, `v${__APP_VERSION__} · ${__APP_COMMIT__}`, { fontSize: '11px', color: '#475569' }).setOrigin(1, 1),
         // With labels on: how fast it's running and on what, for chasing down lag.
         ...(labelsOn() ? [this.label(PAD, this.h - 14, this.speedReadout(), { fontSize: '11px', color: '#475569' }).setOrigin(0, 1)] : []),
@@ -465,6 +466,25 @@ export class UIScene extends Phaser.Scene {
       () => {
         setDevShotgun(!devShotgunOn());
         this.onDevShotgun?.(devShotgunOn());
+        sfx.click();
+        if (this.menu) this.buildMenu();
+      },
+      true,
+    );
+    return [btn, label];
+  }
+
+  /** Developer extra (only with `?dev`): right of the shotgun switch, the flare on or off. Saved. */
+  private devFlareButton() {
+    const x = PAD + 60 + 390;
+    const y = PAD + 14;
+    const btn = this.add.rectangle(x, y, 120, 44, 0x1e293b).setStrokeStyle(2, 0x475569);
+    const label = this.label(x, y, devFlareOn() ? 'Flare: on' : 'Flare: off', { fontSize: '16px', color: '#cbd5e1' }).setOrigin(0.5);
+    this.makeButton(
+      btn,
+      () => {
+        setDevFlare(!devFlareOn());
+        this.onDevFlare?.(devFlareOn());
         sfx.click();
         if (this.menu) this.buildMenu();
       },

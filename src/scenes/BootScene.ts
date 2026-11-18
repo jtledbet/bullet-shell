@@ -58,6 +58,13 @@ export class BootScene extends Phaser.Scene {
     this.bolt('spark', ['rgba(255,255,235,1)', 'rgba(255,190,90,0.9)', 'rgba(255,110,40,0)'], 'rgba(255,140,60,0.6)');
     // Enemy shots: small embers.
     this.emberShot();
+    // The flare: a slow, heavy knot of the core's energy that bursts among enemies. White, so it takes the core's colour.
+    this.glow('flare', 24, [
+      [0, 'rgba(255,255,255,1)'],
+      [0.3, 'rgba(255,255,255,0.95)'],
+      [0.55, 'rgba(255,255,255,0.45)'],
+      [1, 'rgba(255,255,255,0)'],
+    ]);
 
     const gem = [[8, 2], [14, 8], [8, 14], [2, 8]].map(([x, y]) => new Phaser.Math.Vector2(x * S, y * S));
     g.fillStyle(0x4ade80).fillPoints(gem, true);

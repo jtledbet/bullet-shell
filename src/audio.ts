@@ -199,6 +199,22 @@ export const sfx = {
       for (const [hz, vol] of [[110, 0.07], [165, 0.05], [220, 0.04], [330, 0.025]]) tone(t, 'triangle', hz, hz, 2.6, vol, 0.9);
     }
   },
+  /** A flare bursting: a crack, a wide body of noise and a deep falling boom. */
+  boom() {
+    const t = begin('boom', 0.1);
+    if (t === null) return;
+    noise(t, 0.04, 0.16, 5000, 'highpass');
+    noise(t, 0.4, 0.3, 1100);
+    tone(t, 'sine', 120, 34, 0.45, 0.38);
+    tone(t, 'triangle', 240, 60, 0.25, 0.12);
+  },
+  /** A flare leaving the core: a soft, low whump. */
+  lob() {
+    const t = begin('lob', 0.1);
+    if (t === null) return;
+    noise(t, 0.12, 0.07, 700);
+    tone(t, 'sine', 180, 90, 0.16, 0.14);
+  },
   /** Energy coming back: two soft rising notes. */
   heal() {
     const t = begin('heal', 0.12);

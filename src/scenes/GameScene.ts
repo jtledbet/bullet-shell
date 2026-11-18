@@ -4,7 +4,7 @@ import { Face } from '../face';
 import { sfx } from '../audio';
 import { pixelRatio, TEX_SCALE } from '../display';
 import { restHum, setDanger, setHum, setPauseMusic } from '../music';
-import { devShotgunOn, labelsOn, recordRun, setDev, setLabels } from '../storage';
+import { devFlareOn, devShotgunOn, labelsOn, recordRun, setDev, setLabels } from '../storage';
 import { CORE_COLOURS, CORE_WHITE, POWER_NAMES, TRAIT_COLOURS, type Trait } from '../traits';
 import { baseStats, rollUpgrades, type Stats } from '../upgrades';
 
@@ -260,6 +260,27 @@ const TRAIT_CAP = 4;
 const PHASE_SECONDS = 1.2;
 const BRACE_SECONDS = 1.5;
 const BRACE_DAMAGE = 0.2;
+/**
+ * Weapons. Every level makes your shots hit this much harder (on top of any cards), and your
+ * bolts grow a little to show it. A bolt that lands without killing jolts its target back.
+ */
+const LEVEL_DAMAGE = 0.08;
+const BOLT_GROWTH = 0.04;
+const BOLT_GROWTH_MAX = 1.6;
+const BOLT_JOLT = 110;
+const BOLT_JOLT_SECONDS = 0.07;
+/**
+ * The flare: a slow knot of energy lobbed at your target. It bursts on the first enemy it
+ * touches, or at the end of its reach: everything within FLARE_RADIUS takes this many times
+ * your shot damage and is thrown outward.
+ */
+const FLARE_SPEED = 300;
+const FLARE_RANGE = 420;
+const FLARE_RADIUS = 80;
+const FLARE_DAMAGE = 6;
+const FLARE_ENERGY = 0.4;
+/** Developer extra: flares this often from the first second. */
+const DEV_FLARE_EVERY = 2;
 /** Rage's power: a tight blast. Everything this close takes this many times your shot damage. */
 const BURST_RADIUS = 100;
 const BURST_DAMAGE = 10;
@@ -335,6 +356,8 @@ export class GameScene extends Phaser.Scene {
   private bullets!: Phaser.Physics.Arcade.Group;
   private gems!: Phaser.Physics.Arcade.Group;
   private motes!: Phaser.Physics.Arcade.Group;
+  private flares!: Phaser.Physics.Arcade.Group;
+  private flareCooldown = 0;
   private grid!: Phaser.GameObjects.Graphics;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private readonly aimVec = new Phaser.Math.Vector2();
@@ -424,7 +447,7 @@ export class GameScene extends Phaser.Scene {
     const resume = data?.resume ?? null;
     this.stats = baseStats();
     this.hp = this.stats.maxHp;
-    this.xp = this.kills = this.elapsed = this.fireCooldown = this.shotgunCooldown = this.invuln = this.pendingLevels = 0;
+    this.xp = this.kills = this.elapsed = this.fireCooldown = this.shotgunCooldown = this.flareCooldown = this.invuln = this.pendingLevels = 0;
     this.blastId = this.hitStop = this.gridKick = 0;
     this.impactBlast = -1;
     this.level = 1;
@@ -507,6 +530,7 @@ export class GameScene extends Phaser.Scene {
     this.enemyBullets = this.physics.add.group({ defaultKey: 'ember-shot', maxSize: 300 });
     this.gems = this.physics.add.group({ defaultKey: 'gem', maxSize: 600 });
     this.motes = this.physics.add.group({ defaultKey: 'mote', maxSize: 120 });
+    this.flares = this.physics.add.group({ defaultKey: 'flare', maxSize: 24 });
 
     this.physics.add.collider(this.enemies, this.enemies, (a, b) => this.spreadCharm(a as Sprite, b as Sprite));
     this.physics.add.overlap(this.bullets, this.enemies, (b, e) => this.onBulletHit(b as Sprite, e as Sprite));
@@ -514,6 +538,7 @@ export class GameScene extends Phaser.Scene {
     this.physics.add.overlap(this.player, this.enemyBullets, (_p, b) => this.onEnemyBullet(b as Sprite));
     this.physics.add.overlap(this.player, this.gems, (_p, g) => this.onGem(g as Sprite));
     this.physics.add.overlap(this.player, this.motes, (_p, m) => this.onMote(m as Sprite));
+    this.physics.add.overlap(this.flares, this.enemies, (f) => this.burstFlare(f as Sprite));
 
     const cam = this.cameras.main;
     cam.setBackgroundColor('rgba(0,0,0,0)');
@@ -552,6 +577,8 @@ export class GameScene extends Phaser.Scene {
     this.ui.onPauseRequested = () => this.pauseGame();
     this.ui.onAbilityRequested = () => this.useAbility();
     this.ui.onDevShotgun = (on) => this.setAutoShotgun(on);
+    this.ui.onDevFlare = (on) => this.setDevFlare(on);
+    if (devFlareOn()) this.setDevFlare(true);
     this.autoShotgun = false;
     if (devShotgunOn()) this.setAutoShotgun(true);
   }
@@ -570,6 +597,11 @@ export class GameScene extends Phaser.Scene {
     const focused = document.hasFocus();
     if (this.hadFocus && !focused) this.onFocusLost();
     this.hadFocus = focused;
+  }
+
+  /** Developer extra: hands over the flare, or takes it back. */
+  private setDevFlare(on: boolean) {
+    this.stats.flareEvery = on ? Math.min(this.stats.flareEvery || DEV_FLARE_EVERY, DEV_FLARE_EVERY) : 0;
   }
 
   /** Developer extra: hands over the auto shotgun, or takes it back (which also puts the shotgun back to none). */
@@ -634,9 +666,11 @@ export class GameScene extends Phaser.Scene {
     this.updateZoom(dt);
     this.ageBullets(this.bullets, dt);
     this.ageBullets(this.enemyBullets, dt);
+    this.ageFlares(dt);
     this.enemiesShoot(dt);
     this.fire(dt);
     this.fireShotgun(dt);
+    this.fireFlare(dt);
     this.spawn(dt);
 
     if (this.invuln > 0) this.invuln -= dt;
@@ -967,7 +1001,8 @@ export class GameScene extends Phaser.Scene {
     b.enableBody(true, this.player.x, this.player.y, true, true);
     // The sprite pivots on its glowing head, so the round body stays on the head whichever way it flies.
     b.setTexture(pellet ? 'spark' : 'bolt').setOrigin(22 / 32, 0.5).setRotation(angle).setBlendMode(Phaser.BlendModes.ADD);
-    b.setScale(pellet ? SPRITE_SCALE * 0.7 : SPRITE_SCALE).setCircle(5 * T, 17 * T, 3 * T).setDepth(5);
+    const grown = Math.min(BOLT_GROWTH_MAX, 1 + BOLT_GROWTH * (this.level - 1));
+    b.setScale(SPRITE_SCALE * grown * (pellet ? 0.7 : 1)).setCircle(5 * T, 17 * T, 3 * T).setDepth(5);
     if (pellet) b.clearTint();
     else b.setTint(lerpColor(this.coreColour, 0xffffff, 0.3));
     this.physics.velocityFromRotation(angle, speed, (b.body as Phaser.Physics.Arcade.Body).velocity);
@@ -1315,7 +1350,10 @@ export class GameScene extends Phaser.Scene {
     hits.add(e);
 
     if (b.getData('pellet')) this.blastImpact(b.getData('blast'));
-    if (!this.strike(e, this.stats.damage) && b.getData('pellet')) this.shove(e);
+    if (!this.strike(e, this.shotDamage())) {
+      if (b.getData('pellet')) this.shove(e);
+      else if (!this.tutorial) this.jolt(e, b);
+    }
 
     const pierce = b.getData('pierce');
     if (pierce <= 0) b.disableBody(true, true);
@@ -1366,6 +1404,80 @@ export class GameScene extends Phaser.Scene {
     return false;
   }
 
+  /** Lobs a flare at whatever you are aiming at (or the nearest enemy in reach), on its own slow rhythm. */
+  private fireFlare(dt: number) {
+    if (this.stats.flareEvery === 0) return;
+    this.flareCooldown -= dt;
+    if (this.flareCooldown > 0) return;
+    const dir = this.aimDirection(FLARE_RANGE);
+    if (!dir) return;
+    const f = this.flares.get() as Sprite | null;
+    if (!f) return;
+    this.flareCooldown = this.stats.flareEvery;
+    this.spend(FLARE_ENERGY);
+    sfx.lob();
+    f.enableBody(true, this.player.x, this.player.y, true, true);
+    f.setScale(SPRITE_SCALE).setCircle(7 * T, 5 * T, 5 * T).setDepth(5).setBlendMode(Phaser.BlendModes.ADD).setTint(lerpColor(this.coreColour, 0xffffff, 0.3));
+    this.physics.velocityFromRotation(dir.angle(), FLARE_SPEED, (f.body as Phaser.Physics.Arcade.Body).velocity);
+    f.setData('life', FLARE_RANGE / FLARE_SPEED);
+  }
+
+  /** Flares pulse as they fly, and burst when they run out of reach. */
+  private ageFlares(dt: number) {
+    for (const obj of this.flares.getChildren()) {
+      const f = obj as Sprite;
+      if (!f.active) continue;
+      const life = (f.getData('life') as number) - dt;
+      if (life <= 0) this.burstFlare(f);
+      else f.setData('life', life).setScale(SPRITE_SCALE * (1 + 0.12 * Math.sin(this.time.now / 60)));
+    }
+  }
+
+  /**
+   * A flare bursts: everything in reach is hit hard and thrown outward from the blast,
+   * with a flash, a ring, a spray of sparks and a jolt of the background.
+   */
+  private burstFlare(f: Sprite) {
+    if (!f.active) return;
+    const { x, y } = f;
+    f.disableBody(true, true);
+    const reach = FLARE_RADIUS * Math.sqrt(this.stats.flarePower);
+    const damage = this.shotDamage() * FLARE_DAMAGE * this.stats.flarePower;
+    for (const obj of this.enemies.getChildren()) {
+      const e = obj as Sprite;
+      if (!e.active) continue;
+      const d = Phaser.Math.Distance.Between(x, y, e.x, e.y);
+      if (d > reach) continue;
+      if (this.strike(e, damage)) continue;
+      const away = Phaser.Math.Angle.Between(x, y, e.x, e.y);
+      this.physics.velocityFromRotation(away, Phaser.Math.Linear(KNOCKBACK_NEAR, KNOCKBACK_FAR, d / reach), (e.body as Phaser.Physics.Arcade.Body).velocity);
+      e.setData('knock', KNOCKBACK_SECONDS);
+    }
+    sfx.boom();
+    this.gridKick = BLAST_KICK_MS / 1000;
+    this.flecks.explode(16, x, y);
+    const colour = lerpColor(this.coreColour, 0xffffff, 0.3);
+    // A glow that swells past the blast's edge, white-hot in the middle, and a ring that marks its reach.
+    const full = (reach * 2.8) / (24 * T);
+    const flash = this.add.image(x, y, 'flare').setTint(colour).setDepth(6).setBlendMode(Phaser.BlendModes.ADD).setScale(full * 0.35);
+    const ring = this.add.circle(x, y, reach).setStrokeStyle(3, colour, 0.95).setDepth(6).setScale(0.25);
+    this.tweens.add({ targets: flash, scale: full, alpha: 0, duration: 420, ease: 'Cubic.Out', onComplete: () => flash.destroy() });
+    this.tweens.add({ targets: ring, scale: 1, alpha: 0, duration: 360, ease: 'Cubic.Out', onComplete: () => ring.destroy() });
+  }
+
+  /** What one of your shots does right now: the stat, grown a little by every level. */
+  private shotDamage() {
+    return this.stats.damage * (1 + LEVEL_DAMAGE * (this.level - 1));
+  }
+
+  /** A bolt that lands without killing knocks its target back a touch along the bolt's path. */
+  private jolt(e: Sprite, b: Sprite) {
+    const v = (b.body as Phaser.Physics.Arcade.Body).velocity;
+    const len = v.length() || 1;
+    (e.body as Phaser.Physics.Arcade.Body).velocity.set((v.x / len) * BOLT_JOLT, (v.y / len) * BOLT_JOLT);
+    e.setData('knock', BOLT_JOLT_SECONDS);
+  }
+
   /** Firing spends a little of the core's own energy. It can leave you weak, but it never kills. Orientation is free. */
   private spend(amount: number) {
     if (this.tutorial) return;
@@ -1402,7 +1514,7 @@ export class GameScene extends Phaser.Scene {
       if (!e.active) continue;
       const d = Phaser.Math.Distance.Between(p.x, p.y, e.x, e.y);
       if (d > BURST_RADIUS) continue;
-      if (this.strike(e, this.stats.damage * BURST_DAMAGE)) continue;
+      if (this.strike(e, this.shotDamage() * BURST_DAMAGE)) continue;
       const away = Phaser.Math.Angle.Between(p.x, p.y, e.x, e.y);
       this.physics.velocityFromRotation(away, Phaser.Math.Linear(KNOCKBACK_MAX, KNOCKBACK_NEAR, d / BURST_RADIUS), (e.body as Phaser.Physics.Arcade.Body).velocity);
       e.setData('knock', KNOCKBACK_SECONDS * 1.6);

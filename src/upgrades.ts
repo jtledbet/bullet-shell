@@ -14,12 +14,16 @@ export interface Stats {
   shotgunRate: number;
   /** Health restored by each kill. */
   leech: number;
+  /** Seconds between flares; 0 until the Flare card is taken. */
+  flareEvery: number;
+  /** Multiplies a flare's blast damage; its reach grows with the square root of this. */
+  flarePower: number;
 }
 
 export const baseStats = (): Stats => ({
   speed: 200,
   fireRate: 3,
-  damage: 1,
+  damage: 1.4,
   bulletSpeed: 520,
   range: 380,
   multishot: 1,
@@ -29,6 +33,8 @@ export const baseStats = (): Stats => ({
   shotgunPellets: 0,
   shotgunRate: 0.9,
   leech: 0,
+  flareEvery: 0,
+  flarePower: 1,
 });
 
 export interface UpgradeContext {
@@ -68,6 +74,21 @@ export const UPGRADES: Upgrade[] = [
   },
   { name: 'Field Medic', desc: 'Heal 40 HP', apply: (_s, ctx) => ctx.heal(40) },
   { name: 'Siphon', desc: 'Each kill restores 1 HP', apply: (s) => (s.leech += 1) },
+  {
+    name: 'Flare',
+    desc: 'New weapon: lobs a flare that bursts among enemies',
+    apply: (s) => (s.flareEvery = 3.5),
+    available: (s) => s.flareEvery === 0,
+  },
+  {
+    name: 'Brighter Flares',
+    desc: 'Flares: +40% blast, and 15% sooner',
+    apply: (s) => {
+      s.flarePower *= 1.4;
+      s.flareEvery *= 0.85;
+    },
+    available: (s) => s.flareEvery > 0,
+  },
   {
     name: 'Shotgun',
     desc: 'New weapon: a close-range blast of 5 pellets that knocks enemies back',
