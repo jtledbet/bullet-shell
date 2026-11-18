@@ -82,13 +82,13 @@ function tone(at: number, type: OscillatorType, from: number, to: number, dur: n
   osc.stop(at + dur + 0.02);
 }
 
-/** A burst of low-passed white noise. */
-function noise(at: number, dur: number, vol: number, cutoff: number) {
+/** A burst of filtered white noise: low-passed by default, or high-passed for a crisp click or sizzle. */
+function noise(at: number, dur: number, vol: number, cutoff: number, type: BiquadFilterType = 'lowpass') {
   const c = ctx!;
   const src = c.createBufferSource();
   src.buffer = noiseSamples(c);
   const filter = c.createBiquadFilter();
-  filter.type = 'lowpass';
+  filter.type = type;
   filter.frequency.value = cutoff;
   src.connect(filter).connect(envelope(at, dur, vol));
   src.start(at, Math.random() * 0.3, dur + 0.02);
@@ -97,19 +97,31 @@ function noise(at: number, dur: number, vol: number, cutoff: number) {
 const vary = (hz: number, amount = 0.06) => hz * (1 + (Math.random() * 2 - 1) * amount);
 
 export const sfx = {
+  /** Pew: a crisp click, a falling zap, and a small thump underneath. */
   shoot() {
     const t = begin('shoot', 0.05);
-    if (t !== null) tone(t, 'square', vary(720), 240, 0.07, 0.05);
+    if (t === null) return;
+    noise(t, 0.02, 0.07, 4500, 'highpass');
+    tone(t, 'square', vary(900), 210, 0.065, 0.045);
+    tone(t, 'triangle', vary(450), 120, 0.08, 0.07);
+    tone(t, 'sine', vary(160, 0.04), 55, 0.06, 0.12);
   },
+  /** A shot landing without killing: a short, dull thwack. */
   hit() {
     const t = begin('hit', 0.04);
-    if (t !== null) tone(t, 'triangle', vary(330), 180, 0.05, 0.1);
+    if (t === null) return;
+    noise(t, 0.04, 0.14, 1500, 'bandpass');
+    tone(t, 'triangle', vary(300), 120, 0.06, 0.12);
+    tone(t, 'sine', vary(95, 0.04), 50, 0.05, 0.1);
   },
+  /** A kill: a deep pop with a sizzle and a little upward sparkle. */
   kill() {
     const t = begin('kill', 0.05);
     if (t === null) return;
-    noise(t, 0.12, 0.16, 1800);
-    tone(t, 'sine', vary(220), 70, 0.12, 0.16);
+    noise(t, 0.14, 0.18, 2200);
+    noise(t, 0.05, 0.08, 5000, 'highpass');
+    tone(t, 'sine', vary(260), 60, 0.16, 0.2);
+    tone(t + 0.01, 'triangle', vary(660), 990, 0.05, 0.05);
   },
   gem() {
     const t = begin('gem', 0.04);
