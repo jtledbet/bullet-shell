@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import type { UIScene } from './UIScene';
+import { POWER } from '../controls';
 import { Face } from '../face';
 import { sfx } from '../audio';
 import { pixelRatio, TEX_SCALE } from '../display';
@@ -594,7 +595,7 @@ export class GameScene extends Phaser.Scene {
     kb.on('keydown-P', this.togglePause, this);
     kb.on('keydown-SPACE', this.togglePause, this);
     kb.on('keydown-M', () => this.ui.toggleSound());
-    kb.on('keydown-E', () => this.useAbility());
+    kb.on(`keydown-${POWER.key}`, () => this.useAbility());
     // Esc leaves fullscreen without the page ever seeing the key, so pause when fullscreen ends.
     const onFullscreen = () => {
       if (!document.fullscreenElement) this.pauseGame();

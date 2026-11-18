@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { TwinStick } from '../input/TwinStick';
 import { sfx } from '../audio';
+import { POWER } from '../controls';
 import { pixelRatio } from '../display';
 import { canFullscreen, toggleFullscreen } from '../fullscreen';
 import { refreshMusic } from '../music';
@@ -54,7 +55,7 @@ export class UIScene extends Phaser.Scene {
   onDevFlare?: (on: boolean) => void;
   private ability!: Phaser.GameObjects.Container;
   private abilityGfx!: Phaser.GameObjects.Graphics;
-  /** With labels on: the power's name beside its button. */
+  /** The power's name beside its button: always on desktop, and on phones when labels are on. */
   private abilityCaption!: Phaser.GameObjects.Text;
   private abilityReady = false;
   /** Desktop: the "press e" hint shows once, the first time the power is ready. */
@@ -116,7 +117,13 @@ export class UIScene extends Phaser.Scene {
     abilityZone.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (p.button === 0) this.onAbilityRequested?.();
     });
-    this.ability = this.add.container(0, 0, [this.abilityGfx, abilityZone]).setDepth(150).setVisible(false);
+    // On desktop the button always carries the key that uses it.
+    const abilityKey = this
+      .label(0, 0, POWER.glyph, { fontSize: '16px', fontStyle: 'bold', color: '#f8fafc' })
+      .setOrigin(0.5)
+      .setAlpha(0.85)
+      .setVisible(!this.sys.game.device.input.touch);
+    this.ability = this.add.container(0, 0, [this.abilityGfx, abilityKey, abilityZone]).setDepth(150).setVisible(false);
     this.abilityCaption = this.label(0, 0, '', { fontSize: '13px', color: '#cbd5e1' }).setOrigin(1, 0.5).setDepth(150).setVisible(false);
     this.abilityReady = false;
     // The old scene's objects are gone after a restart.
@@ -256,9 +263,9 @@ export class UIScene extends Phaser.Scene {
     const shake = ready && a.trait === 'rage' ? 0.8 : 0;
     const bob = ready && a.trait === 'calm' ? Math.sin(this.time.now / 450) * 2 : 0;
     this.ability.setVisible(true).setPosition(x + Phaser.Math.FloatBetween(-shake, shake), y + bob + Phaser.Math.FloatBetween(-shake, shake));
-    // With labels on, the power is named beside its button.
+    // The power is named beside its button: always on desktop, and on phones when labels are on.
     this.abilityCaption
-      .setVisible(labelsOn())
+      .setVisible(labelsOn() || !touch)
       .setText(POWER_NAMES[a.trait])
       .setOrigin(touch ? 1 : 0, 0.5)
       .setPosition(touch ? x - ABILITY_R - 14 : x + ABILITY_R + 14, y + bob)
@@ -284,7 +291,7 @@ export class UIScene extends Phaser.Scene {
     if (this.abilityHinted || this.sys.game.device.input.touch) return;
     this.abilityHinted = true;
     const hint = this
-      .label(this.ability.x, this.ability.y + ABILITY_R + 12, 'press e', { fontSize: '12px', color: '#94a3b8' })
+      .label(this.ability.x, this.ability.y + ABILITY_R + 12, `press ${POWER.glyph}`, { fontSize: '12px', color: '#94a3b8' })
       .setOrigin(0.5, 0)
       .setDepth(150);
     this.tweens.add({ targets: hint, alpha: 0, delay: 2500, duration: 600, onComplete: () => hint.destroy() });
