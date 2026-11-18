@@ -2,9 +2,11 @@ import Phaser from 'phaser';
 import { TwinStick } from '../input/TwinStick';
 import { sfx } from '../audio';
 import { pixelRatio } from '../display';
+import { canFullscreen, toggleFullscreen } from '../fullscreen';
 import { refreshMusic } from '../music';
 import { bestRun, isMuted, labelsOn, setLabels, setMuted } from '../storage';
-import type { HudState, Trait } from './GameScene';
+import { POWER_NAMES, TRAIT_COLOURS } from '../traits';
+import type { HudState } from './GameScene';
 import type { Upgrade } from '../upgrades';
 
 const PAD = 32; // clears rounded corners and notches in landscape
@@ -16,30 +18,22 @@ const RADAR_ALPHA = 0.7;
 const MENU_ARM_MS = 400;
 /** The HUD is hidden during the tutorial, then snaps in when the fight starts. */
 const HUD_SNAP_MS = 140;
-/** The ability button: its radius, and its colour for the trait driving it (steel, pale, red). */
+/** The build orb at the foot of the pause menu: ember-warm when it leads to the preview build, plasma-pale when it leads back. */
+const ORB_SIZE = 26;
+const ORB_TO_NEXT = 0xffb866;
+const ORB_TO_LIVE = 0xd8ccff;
+/** The pause and fullscreen buttons show plainly for this long, then fade back so they don't cover the field. */
+const CORNER_AWAKE_MS = 3000;
+const CORNER_REST_ALPHA = 0.2;
+/** The power button's radius. Its colour comes from the trait driving it. */
 const ABILITY_R = 22;
-const ABILITY_COLOURS: Record<Trait, number> = { hard: 0x94a3b8, calm: 0xe9e5ff, rage: 0xf43f5e };
+/** The third nudge for a player who hasn't done anything: one quiet word under the core. */
+const NUDGE_WORD = 'move';
 const FONT = 'system-ui, sans-serif';
 /** Where "Exit to site" goes: the games page that links here. */
 const SITE_URL = 'https://ledsec.dev/games/';
 /** Half the centre-to-centre gap between two side-by-side menu buttons. */
 const PAIR_OFFSET = 98;
-
-/** Fullscreen works in Android browsers and on desktop. iPhone Safari has no fullscreen API, so no button there. */
-const canFullscreen = () => !!document.fullscreenEnabled && typeof document.documentElement.requestFullscreen === 'function';
-
-/** Enters fullscreen (locking to landscape where the browser allows it), or leaves it. Must run inside a tap. */
-function toggleFullscreen() {
-  if (document.fullscreenElement) {
-    void document.exitFullscreen().catch(() => {});
-    return;
-  }
-  const orientation = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> };
-  document.documentElement
-    .requestFullscreen({ navigationUI: 'hide' })
-    .then(() => orientation?.lock?.('landscape'))
-    .catch(() => {});
-}
 
 /** Seconds as m:ss. */
 function clock(seconds: number) {
@@ -57,6 +51,8 @@ export class UIScene extends Phaser.Scene {
   onAbilityRequested?: () => void;
   private ability!: Phaser.GameObjects.Container;
   private abilityGfx!: Phaser.GameObjects.Graphics;
+  /** With labels on: the power's name beside its button. */
+  private abilityCaption!: Phaser.GameObjects.Text;
   private abilityReady = false;
   /** Desktop: the "right-click" hint shows once, the first time the ability is ready. */
   private abilityHinted = false;
@@ -66,6 +62,8 @@ export class UIScene extends Phaser.Scene {
   /** Only where fullscreen is supported. */
   private fsBtn?: Phaser.GameObjects.Container;
   private fsIcon?: Phaser.GameObjects.Graphics;
+  private cornerTimer?: Phaser.Time.TimerEvent;
+  private orb?: Phaser.GameObjects.Image;
   private info!: Phaser.GameObjects.Text;
   /** Whether the HUD (bars, info line, gem radar) is showing; off during the tutorial. */
   private hudShown = false;
@@ -116,6 +114,7 @@ export class UIScene extends Phaser.Scene {
       if (p.button === 0) this.onAbilityRequested?.();
     });
     this.ability = this.add.container(0, 0, [this.abilityGfx, abilityZone]).setDepth(150).setVisible(false);
+    this.abilityCaption = this.label(0, 0, '', { fontSize: '13px', color: '#cbd5e1' }).setOrigin(1, 0.5).setDepth(150).setVisible(false);
     this.abilityReady = false;
     // The old scene's objects are gone after a restart.
     this.debugText = undefined;
@@ -125,7 +124,9 @@ export class UIScene extends Phaser.Scene {
       const fsBg = this.add.rectangle(0, 0, 44, 44, 0x1e293b, 0.7).setStrokeStyle(2, 0x334155);
       this.fsIcon = this.add.graphics();
       fsBg.setInteractive({ useHandCursor: true }).on('pointerup', (p: Phaser.Input.Pointer) => {
-        if (p.button === 0) toggleFullscreen();
+        if (p.button !== 0) return;
+        toggleFullscreen();
+        this.wakeCorner();
       });
       this.fsBtn = this.add.container(0, 0, [fsBg, this.fsIcon]).setDepth(150);
       this.drawFsIcon();
@@ -133,26 +134,64 @@ export class UIScene extends Phaser.Scene {
       this.events.once('shutdown', () => document.removeEventListener('fullscreenchange', this.drawFsIcon));
     }
 
-    const touch = this.sys.game.device.input.touch;
+    this.wakeCorner();
+    // A mouse coming near them brings them back.
+    this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      const zoom = this.cameras.main.zoom;
+      if (!p.wasTouch && p.x / zoom > this.w - 190 && p.y / zoom < 110) this.wakeCorner();
+    });
+
     this.hud.setAlpha(0);
     this.info.setAlpha(0);
     this.hudShown = false;
-    this.hint = this
-      .label(
-        this.w / 2,
-        this.h - PAD,
-        // Shown at the start of a game, which is always the tutorial, where auto-aim is off.
-        touch
-          ? 'Left thumb: move   ·   Right thumb: aim'
-          : 'WASD: move   ·   Hold mouse: aim   ·   Esc: pause',
-        { fontSize: '15px', color: '#94a3b8' },
-      )
-      .setOrigin(0.5, 1);
+    this.hint = this.label(this.w / 2, this.h - PAD, this.hintText(), { fontSize: '15px', color: '#94a3b8' }).setOrigin(0.5, 1);
     this.time.delayedCall(6000, () => this.dismissHint());
+  }
+
+  /** The controls, shown at the start of a game. */
+  private hintText() {
+    return this.sys.game.device.input.touch
+      ? 'Left thumb: move   ·   Right thumb: aim'
+      : 'WASD: move   ·   Hold mouse: aim   ·   Esc: pause';
+  }
+
+  /** First nudge: the control hint comes back a little brighter, then fades again. No new words. */
+  nudgeHint() {
+    if (this.menu || this.hint) return;
+    const hint = this.label(this.w / 2, this.h - PAD, this.hintText(), { fontSize: '15px', color: '#e2e8f0' }).setOrigin(0.5, 1).setAlpha(0);
+    this.hint = hint;
+    this.tweens.add({
+      targets: hint,
+      alpha: 1,
+      duration: 1200,
+      hold: 2200,
+      yoyo: true,
+      onComplete: () => {
+        if (this.hint === hint) this.hint = undefined;
+        hint.destroy();
+      },
+    });
+  }
+
+  /** Third nudge: one quiet word under the core. */
+  nudgeWord() {
+    this.floatWord(NUDGE_WORD, 44);
+  }
+
+  /** A small word that fades in near the core (the middle of the screen) and out again. */
+  floatWord(text: string, dy = -44) {
+    if (this.menu) return;
+    const word = this.label(this.w / 2, this.h / 2 + dy, text, { fontSize: '15px', color: '#94a3b8' }).setOrigin(0.5).setAlpha(0);
+    this.tweens.add({ targets: word, alpha: 0.9, duration: dy > 0 ? 1000 : 180, hold: dy > 0 ? 2000 : 700, yoyo: true, onComplete: () => word.destroy() });
   }
 
   update() {
     if (this.hint && this.sticks?.touched) this.dismissHint();
+    // The build orb breathes.
+    if (this.orb?.active) {
+      const breath = (Math.sin(this.time.now / 520) + 1) / 2;
+      this.orb.setDisplaySize(ORB_SIZE + 5 * breath, ORB_SIZE + 5 * breath).setAlpha(0.7 + 0.3 * breath);
+    }
   }
 
   private onResize() {
@@ -199,6 +238,7 @@ export class UIScene extends Phaser.Scene {
   private drawAbility(a: HudState['ability']) {
     if (!a) {
       this.ability.setVisible(false);
+      this.abilityCaption.setVisible(false);
       this.abilityReady = false;
       return;
     }
@@ -207,9 +247,19 @@ export class UIScene extends Phaser.Scene {
     const x = touch ? this.w - PAD - 64 : this.w - PAD - ABILITY_R;
     const y = touch ? this.h - PAD - 150 : this.h - PAD - ABILITY_R;
     const appearing = !this.ability.visible;
-    this.ability.setVisible(true).setPosition(x, y);
-    const colour = ABILITY_COLOURS[a.trait];
+    const colour = TRAIT_COLOURS[a.trait];
     const ready = a.charge >= 1;
+    // Once ready, the button carries its trait's temperament, like the seeds: rage trembles, calm bobs, hard holds still.
+    const shake = ready && a.trait === 'rage' ? 0.8 : 0;
+    const bob = ready && a.trait === 'calm' ? Math.sin(this.time.now / 450) * 2 : 0;
+    this.ability.setVisible(true).setPosition(x + Phaser.Math.FloatBetween(-shake, shake), y + bob + Phaser.Math.FloatBetween(-shake, shake));
+    // With labels on, the power is named beside its button.
+    this.abilityCaption
+      .setVisible(labelsOn())
+      .setText(POWER_NAMES[a.trait])
+      .setPosition(x - ABILITY_R - 14, y + bob)
+      .setAngle(Phaser.Math.FloatBetween(-shake, shake) * 2.5)
+      .setAlpha(ready ? 1 : 0.5);
     const g = this.abilityGfx.clear();
     g.fillStyle(colour, ready ? 0.45 : 0.14).fillCircle(0, 0, ABILITY_R);
     g.lineStyle(3, colour, 0.2).strokeCircle(0, 0, ABILITY_R + 5);
@@ -289,7 +339,8 @@ export class UIScene extends Phaser.Scene {
     return items;
   }
 
-  showGameOver(s: HudState, newBest: boolean, onRestart: () => void) {
+  /** `onAgain` starts the next run right after orientation, as the same core; `onStart` goes back to the very beginning. */
+  showGameOver(s: HudState, newBest: boolean, onAgain: (() => void) | null, onStart: () => void) {
     const text = `Survived ${clock(s.elapsed)}  ·  Level ${s.level}  ·  ${s.kills} kills`;
     const best = bestRun();
     const bestText = newBest ? 'New best!' : best ? `Best ${clock(best.time)}  ·  Level ${best.level}  ·  ${best.kills} kills` : '';
@@ -303,8 +354,13 @@ export class UIScene extends Phaser.Scene {
         this.title('Game over', h * 0.28),
         summary,
         record,
-        ...this.menuButton('again', h * 0.64, onRestart, { dx: -PAIR_OFFSET }),
-        ...this.exitButton(h * 0.64),
+        ...(onAgain
+          ? [
+              ...this.menuButton('again', h * 0.64, onAgain, { dx: -PAIR_OFFSET * 2 }),
+              ...this.menuButton('from the start', h * 0.64, onStart, { dx: 0.001, quiet: true }),
+              ...this.exitButton(h * 0.64, PAIR_OFFSET * 2),
+            ]
+          : [...this.menuButton('again', h * 0.64, onStart, { dx: -PAIR_OFFSET }), ...this.exitButton(h * 0.64)]),
       ];
     });
   }
@@ -317,9 +373,13 @@ export class UIScene extends Phaser.Scene {
         ...this.menuButton('Resume', h * 0.47, onResume),
         ...this.menuButton('Restart', h * 0.68, onRestart, { dx: -PAIR_OFFSET }),
         ...this.exitButton(h * 0.68),
+        ...this.resumeCorner(onResume),
+        ...this.buildOrb(),
         ...this.soundButton(),
         ...this.labelsButton(),
         this.label(this.w - PAD, this.h - 14, `v${__APP_VERSION__} · ${__APP_COMMIT__}`, { fontSize: '11px', color: '#475569' }).setOrigin(1, 1),
+        // With labels on: how fast it's running and on what, for chasing down lag.
+        ...(labelsOn() ? [this.label(PAD, this.h - 14, this.speedReadout(), { fontSize: '11px', color: '#475569' }).setOrigin(0, 1)] : []),
       ];
     });
   }
@@ -332,9 +392,47 @@ export class UIScene extends Phaser.Scene {
     if (this.menu) this.buildMenu();
   }
 
-  /** Top-right corner of the pause menu, where the (hidden) pause button normally sits. */
+  /**
+   * A small glowing orb at the foot of the pause menu. On the live game it leads to the preview
+   * build (/next/); on the preview build it leads back. With labels on, it says which.
+   */
+  private buildOrb() {
+    const onNext = window.location.pathname.includes('/next/');
+    const x = this.w / 2;
+    const y = this.h - 30;
+    const zone = this.add.rectangle(x, y, 48, 48, 0x000000, 0.001);
+    this.orb = this.add.image(x, y, 'orb').setTint(onNext ? ORB_TO_LIVE : ORB_TO_NEXT).setDisplaySize(ORB_SIZE, ORB_SIZE);
+    this.makeButton(zone, () => window.location.assign(new URL(onNext ? '../' : 'next/', window.location.href).href));
+    const caption = labelsOn()
+      ? [this.label(x + ORB_SIZE / 2 + 8, y, onNext ? 'live' : 'next', { fontSize: '13px', color: '#94a3b8' }).setOrigin(0, 0.5)]
+      : [];
+    return [zone, this.orb, ...caption];
+  }
+
+  /** Frames per second, the size being drawn, and the graphics device doing it. */
+  private speedReadout() {
+    const r = this.game.renderer;
+    let device = 'canvas';
+    if (r instanceof Phaser.Renderer.WebGL.WebGLRenderer) {
+      const info = r.gl.getExtension('WEBGL_debug_renderer_info');
+      device = String(r.gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : r.gl.RENDERER));
+    }
+    return `${Math.round(this.game.loop.actualFps)} fps  ·  ${this.scale.width}x${this.scale.height}  ·  ${device}`;
+  }
+
+  /** Top-right of the pause menu, exactly where the pause button sits: the thumb that paused resumes. */
+  private resumeCorner(onResume: () => void) {
+    const x = this.w - PAD - 22;
+    const y = PAD + 14;
+    const btn = this.add.rectangle(x, y, 44, 44, 0x1e293b, 0.7).setStrokeStyle(2, 0x5eead4);
+    const icon = this.add.graphics().fillStyle(0xe2e8f0).fillTriangle(x - 6, y - 10, x - 6, y + 10, x + 10, y);
+    this.makeButton(btn, onResume);
+    return [btn, icon];
+  }
+
+  /** Top-left corner of the pause menu. */
   private soundButton() {
-    const x = this.w - PAD - 60;
+    const x = PAD + 60;
     const y = PAD + 14;
     const btn = this.add.rectangle(x, y, 120, 44, 0x1e293b).setStrokeStyle(2, 0x475569);
     const label = this.label(x, y, isMuted() ? 'Sound: off' : 'Sound: on', { fontSize: '16px', color: '#cbd5e1' }).setOrigin(0.5);
@@ -342,9 +440,9 @@ export class UIScene extends Phaser.Scene {
     return [btn, label];
   }
 
-  /** Left of the sound button: name plates over the tutorial seeds, on or off. Saved. */
+  /** Right of the sound button: name plates over the seeds and the power button, on or off. Saved. */
   private labelsButton() {
-    const x = this.w - PAD - 60 - 130;
+    const x = PAD + 60 + 130;
     const y = PAD + 14;
     const btn = this.add.rectangle(x, y, 120, 44, 0x1e293b).setStrokeStyle(2, 0x475569);
     const label = this.label(x, y, labelsOn() ? 'Labels: on' : 'Labels: off', { fontSize: '16px', color: '#cbd5e1' }).setOrigin(0.5);
@@ -366,17 +464,27 @@ export class UIScene extends Phaser.Scene {
     console.info('[tutorial]', text);
   }
 
+  /** Shows the pause and fullscreen buttons plainly, then lets them fade back. They still work while faded. */
+  private wakeCorner() {
+    const buttons = [this.pauseBtn, ...(this.fsBtn ? [this.fsBtn] : [])];
+    this.tweens.killTweensOf(buttons);
+    for (const b of buttons) b.setAlpha(1);
+    this.cornerTimer?.remove();
+    this.cornerTimer = this.time.delayedCall(CORNER_AWAKE_MS, () => this.tweens.add({ targets: buttons, alpha: CORNER_REST_ALPHA, duration: 700 }));
+  }
+
   closeMenu() {
     this.menu?.destroy();
     this.menu = this.menuBuild = undefined;
     this.pauseBtn.setVisible(true);
     this.fsBtn?.setVisible(true);
+    this.wakeCorner();
     if (this.sticks) this.sticks.enabled = true;
   }
 
   /** Leaves the game for the site. Sits to the right of another button, styled quieter. */
-  private exitButton(y: number) {
-    return this.menuButton('Exit to site', y, () => window.location.assign(SITE_URL), { dx: PAIR_OFFSET, quiet: true });
+  private exitButton(y: number, dx = PAIR_OFFSET) {
+    return this.menuButton('Exit to site', y, () => window.location.assign(SITE_URL), { dx, quiet: true });
   }
 
   private menuButton(text: string, y: number, action: () => void, opts: { dx?: number; quiet?: boolean } = {}) {
@@ -407,6 +515,7 @@ export class UIScene extends Phaser.Scene {
     this.pauseBtn.setVisible(false);
     this.fsBtn?.setVisible(false);
     this.ability.setVisible(false);
+    this.abilityCaption.setVisible(false);
     this.menuBuild = build;
     this.menuOpenedAt = this.time.now;
     this.buildMenu();
@@ -464,6 +573,7 @@ export class UIScene extends Phaser.Scene {
     if (!this.hint) return;
     const hint = this.hint;
     this.hint = undefined;
+    this.tweens.killTweensOf(hint);
     this.tweens.add({ targets: hint, alpha: 0, duration: 400, onComplete: () => hint.destroy() });
   }
 }

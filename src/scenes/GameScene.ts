@@ -2,8 +2,9 @@ import Phaser from 'phaser';
 import type { UIScene } from './UIScene';
 import { sfx } from '../audio';
 import { pixelRatio, TEX_SCALE } from '../display';
-import { setDanger, setHum, setPauseMusic } from '../music';
+import { restHum, setDanger, setHum, setPauseMusic } from '../music';
 import { labelsOn, recordRun, setLabels } from '../storage';
+import { POWER_NAMES, TRAIT_COLOURS, type Trait } from '../traits';
 import { baseStats, rollUpgrades, type Stats } from '../upgrades';
 
 type Sprite = Phaser.Physics.Arcade.Sprite;
@@ -11,9 +12,20 @@ type Vec = Phaser.Math.Vector2;
 
 /** Where the player starts. Space is endless: there are no walls. */
 const START = 1200;
-/** Background grid: one tile is 64 world px; the tiled area is recentred on the view so it never runs out. */
+/**
+ * Background grid: lines every 64 world px over an area recentred on the view, so it never runs
+ * out. Drawn as lines over a plain backdrop colour: a full-screen textured layer cost about half
+ * of every frame on machines without a fast graphics card.
+ */
 const GRID_TILE = 64;
-const GRID_SIZE = 4096;
+const GRID_SIZE = 2048;
+const GRID_COLOUR = 0x1e293b;
+/** The backdrop: black during orientation, this once the run begins. */
+const FIELD_COLOUR = 0x0b1222;
+/** The first level-up comes quickly; after that the curve takes over. */
+const FIRST_LEVEL_XP = 3;
+/** Your bolts take this colour. */
+const SHOT_TINT = 0xd8ccff;
 /** Visible world area held constant across screen sizes, so no device sees more of the arena. */
 const VIEW_AREA = 960 * 540;
 /**
@@ -116,6 +128,12 @@ const CURIOUS_NEAR = 160;
 const FLINCH_SPEED = 260;
 const FLINCH_SECONDS = 0.15;
 const TREMBLE_DEG = 4;
+/**
+ * Orientation, before the player has ever done anything: gentle nudges at these idle seconds.
+ * The control hint glows again, then the nearest seed gives a small pulse, then one quiet word.
+ * They stop for good at the first input, and all come before the seeds get irritated.
+ */
+const NUDGE_SECONDS = [8, 16, 22];
 
 /** How an enemy moves. Normal enemies chase; the tutorial enemy has a temperament, and turns aggro when shot. */
 type Mood = 'chase' | (typeof TUTORIAL_MOODS)[number];
@@ -152,7 +170,6 @@ const ENEMY_SHOT_GAP: [number, number] = [1.8, 3.6];
  * What the core becomes from the tutorial, one point per seed:
  * hard (seeds killed), calm (curious or skeptical seeds let in), rage (aggro seeds let in).
  */
-export type Trait = 'hard' | 'calm' | 'rage';
 /** Hard: each point cuts damage taken by this fraction. */
 const HARD_ARMOR = 0.12;
 /** Hard: width (world px) of the dark edge per point, capped. */
@@ -206,13 +223,22 @@ export interface HudState {
   ability: { trait: Trait; charge: number } | null;
 }
 
+/** What orientation decided. Kept so the next run can start right after it. */
+interface Outcome {
+  mode: 'heaven' | 'hell';
+  traits: Record<Trait, number>;
+  lastTrait: Trait | null;
+}
+
 export class GameScene extends Phaser.Scene {
+  /** Whether the player has ever moved or shot, in any run this visit. Nudges are only for someone who hasn't. */
+  private static acted = false;
   private ui!: UIScene;
   private player!: Sprite;
   private enemies!: Phaser.Physics.Arcade.Group;
   private bullets!: Phaser.Physics.Arcade.Group;
   private gems!: Phaser.Physics.Arcade.Group;
-  private grid!: Phaser.GameObjects.TileSprite;
+  private grid!: Phaser.GameObjects.Graphics;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private readonly aimVec = new Phaser.Math.Vector2();
   private readonly moveVec = new Phaser.Math.Vector2();
@@ -258,6 +284,9 @@ export class GameScene extends Phaser.Scene {
   private pendingSeeds = 0;
   /** Tutorial: seconds standing idle, whether that has irritated the seeds, bumps taken, and the current bump. */
   private idleTime = 0;
+  private nudges = 0;
+  private outcome: Outcome | null = null;
+  private powerFx!: Phaser.GameObjects.Graphics;
   private irritated = false;
   private bumps = 0;
   private bumpLeft = 0;
@@ -283,7 +312,9 @@ export class GameScene extends Phaser.Scene {
     super('game');
   }
 
-  create() {
+  /** `resume` starts the run right after orientation. (Phaser keeps a scene's old data unless a restart passes new data, so restarts always pass some.) */
+  create(data?: { resume?: Outcome }) {
+    const resume = data?.resume ?? null;
     this.stats = baseStats();
     this.hp = this.stats.maxHp;
     this.xp = this.kills = this.elapsed = this.fireCooldown = this.shotgunCooldown = this.invuln = this.pendingLevels = 0;
@@ -292,15 +323,18 @@ export class GameScene extends Phaser.Scene {
     this.level = 1;
     this.spawnTimer = 1;
     this.frozen = this.paused = false;
-    // Every new game opens with the tutorial.
-    this.tutorial = true;
-    this.mode = 'heaven';
+    // A new game opens with orientation, unless it picks up right after the last one.
+    this.tutorial = !resume;
+    this.mode = resume?.mode ?? 'heaven';
+    this.outcome = resume;
     this.notes = { startMood: 'curious', firstShot: null, shots: 0, shotWhileCalm: false, seconds: 0, killed: 0, absorbed: 0 };
     this.pendingSeeds = 0;
-    this.idleTime = this.bumps = this.bumpLeft = this.bumpGap = 0;
+    this.idleTime = this.nudges = this.bumps = this.bumpLeft = this.bumpGap = 0;
     this.irritated = false;
-    this.traits = { hard: 0, calm: 0, rage: 0 };
-    this.lastTrait = this.lastAbility = null;
+    this.traits = resume ? { ...resume.traits } : { hard: 0, calm: 0, rage: 0 };
+    this.lastTrait = resume?.lastTrait ?? null;
+    this.lastAbility = null;
+    if (resume) this.stats.damage *= 1 + RAGE_DAMAGE * this.trait('rage');
     this.abilityCooldown = this.phaseLeft = this.braceLeft = 0;
     this.moodLabels = [];
     setPauseMusic(false);
@@ -308,8 +342,11 @@ export class GameScene extends Phaser.Scene {
     this.physics.resume();
     this.time.paused = false;
 
-    this.grid = this.add.tileSprite(0, 0, GRID_SIZE, GRID_SIZE, 'grid').setOrigin(0).setTileScale(SPRITE_SCALE);
-    this.grid.setVisible(!this.tutorial);
+    this.grid = this.add.graphics().setVisible(!this.tutorial);
+    this.grid.lineStyle(1, GRID_COLOUR);
+    for (let p = 0; p <= GRID_SIZE; p += GRID_TILE) this.grid.lineBetween(p, 0, p, GRID_SIZE).lineBetween(0, p, GRID_SIZE, p);
+    this.setBackdrop(this.tutorial ? 0x000000 : FIELD_COLOUR);
+    this.powerFx = this.add.graphics().setDepth(12);
 
     this.player = this.physics.add.sprite(START, START, 'player').setDepth(10).setScale(SPRITE_SCALE);
     this.player.setCircle(13 * T, 3 * T, 3 * T);
@@ -340,8 +377,8 @@ export class GameScene extends Phaser.Scene {
     this.hardEdge = this.add.graphics().setDepth(12);
 
     this.enemies = this.physics.add.group({ defaultKey: 'enemy', maxSize: 400 });
-    this.bullets = this.physics.add.group({ defaultKey: 'bullet', maxSize: 300 });
-    this.enemyBullets = this.physics.add.group({ defaultKey: 'bullet', maxSize: 300 });
+    this.bullets = this.physics.add.group({ defaultKey: 'bolt', maxSize: 300 });
+    this.enemyBullets = this.physics.add.group({ defaultKey: 'ember-shot', maxSize: 300 });
     this.gems = this.physics.add.group({ defaultKey: 'gem', maxSize: 600 });
 
     this.physics.add.collider(this.enemies, this.enemies);
@@ -351,7 +388,7 @@ export class GameScene extends Phaser.Scene {
     this.physics.add.overlap(this.player, this.gems, (_p, g) => this.onGem(g as Sprite));
 
     const cam = this.cameras.main;
-    cam.setBackgroundColor(this.tutorial ? 0x000000 : 'rgba(0,0,0,0)');
+    cam.setBackgroundColor('rgba(0,0,0,0)');
     cam.startFollow(this.player, true, 0.15, 0.15);
     this.zoomFactor = this.tutorial ? ZOOM_CLOSE : ZOOM_QUIET;
     this.fitZoom();
@@ -404,6 +441,11 @@ export class GameScene extends Phaser.Scene {
     this.hadFocus = focused;
   }
 
+  /** The colour behind everything. It is the canvas's own clear colour, so it costs nothing to draw. */
+  private setBackdrop(colour: number) {
+    this.game.config.backgroundColor.setTo((colour >> 16) & 0xff, (colour >> 8) & 0xff, colour & 0xff);
+  }
+
   private togglePause() {
     if (this.paused) this.resumeGame();
     else this.pauseGame();
@@ -417,7 +459,7 @@ export class GameScene extends Phaser.Scene {
     setPauseMusic(true);
     this.ui.showPause(
       () => this.resumeGame(),
-      () => this.scene.restart(),
+      () => this.scene.restart({}),
     );
   }
 
@@ -539,6 +581,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private xpToNext() {
+    if (this.level === 1) return FIRST_LEVEL_XP;
     return Math.floor(5 * Math.pow(this.level, 1.35));
   }
 
@@ -561,12 +604,27 @@ export class GameScene extends Phaser.Scene {
     this.player.setVelocity(v.x * this.stats.speed, v.y * this.stats.speed);
   }
 
+  /** One gentle nudge for a player who hasn't done anything yet. */
+  private nudge(stage: number, seeds: Sprite[]) {
+    if (stage === 0) return this.ui.nudgeHint();
+    if (stage === 2) return this.ui.nudgeWord();
+    // The nearest seed gives one small pulse, as if noticing you.
+    const d = (e: Sprite) => Phaser.Math.Distance.Squared(e.x, e.y, this.player.x, this.player.y);
+    const e = seeds.reduce((a, b) => (d(b) < d(a) ? b : a));
+    this.tweens.add({ targets: e, scale: e.scaleX * 1.3, duration: 240, yoyo: true, ease: 'Sine.InOut' });
+  }
+
   /** Tutorial: standing idle too long irritates the seeds; running far enough from all of them ends it. */
   private watchTutorial(dt: number) {
     if (!this.tutorial) return;
     const seeds = this.enemies.getChildren().filter((o) => o.active) as Sprite[];
     if (!seeds.length) return;
-    this.idleTime = this.moveVec.lengthSq() > 0.01 ? 0 : this.idleTime + dt;
+    const moving = this.moveVec.lengthSq() > 0.01;
+    if (moving) GameScene.acted = true;
+    this.idleTime = moving ? 0 : this.idleTime + dt;
+    if (!GameScene.acted && this.nudges < NUDGE_SECONDS.length && this.idleTime >= NUDGE_SECONDS[this.nudges]) {
+      this.nudge(this.nudges++, seeds);
+    }
     if (this.idleTime >= IDLE_IRRITATE_SECONDS && !this.irritated) {
       this.irritated = true;
       for (const e of seeds) {
@@ -654,6 +712,7 @@ export class GameScene extends Phaser.Scene {
     this.fireCooldown = 1 / this.stats.fireRate;
     if (this.tutorial) {
       this.idleTime = 0;
+      GameScene.acted = true;
       this.notes.shots++;
       this.notes.firstShot ??= this.notes.seconds;
     }
@@ -694,9 +753,11 @@ export class GameScene extends Phaser.Scene {
     const b = this.bullets.get() as Sprite | null;
     if (!b) return false;
     b.enableBody(true, this.player.x, this.player.y, true, true);
-    b.setScale(pellet ? SPRITE_SCALE * 0.7 : SPRITE_SCALE).setCircle(5 * T, 3 * T, 3 * T).setDepth(5);
-    if (pellet) b.setTint(0xfb923c);
-    else b.clearTint();
+    // The sprite pivots on its glowing head, so the round body stays on the head whichever way it flies.
+    b.setTexture(pellet ? 'spark' : 'bolt').setOrigin(22 / 32, 0.5).setRotation(angle).setBlendMode(Phaser.BlendModes.ADD);
+    b.setScale(pellet ? SPRITE_SCALE * 0.7 : SPRITE_SCALE).setCircle(5 * T, 17 * T, 3 * T).setDepth(5);
+    if (pellet) b.clearTint();
+    else b.setTint(SHOT_TINT);
     this.physics.velocityFromRotation(angle, speed, (b.body as Phaser.Physics.Arcade.Body).velocity);
     // Reuse the pooled bullet's hit set rather than allocating one per shot.
     const hits = (b.getData('hits') as Set<Sprite> | undefined) ?? new Set<Sprite>();
@@ -763,7 +824,8 @@ export class GameScene extends Phaser.Scene {
       else if (mood === 'curious') this.steerCurious(e);
       else if (mood === 'skeptical') {
         if (!this.flinch(e)) this.steerWander(e, dt, true);
-      } else this.physics.moveToObject(e, this.player, e.getData('speed'));
+      } else if (this.phaseLeft <= 0) this.physics.moveToObject(e, this.player, e.getData('speed'));
+      // While you phase, enemies lose you: they carry on the way they were going.
     }
   }
 
@@ -892,6 +954,7 @@ export class GameScene extends Phaser.Scene {
     // Idling ends as hard (you stood there and took it); running away, as calm.
     if (outcome === 'idled') this.gainTrait('hard');
     if (outcome === 'ran') this.gainTrait('calm');
+    this.outcome = { mode: hell ? 'hell' : 'heaven', traits: { ...this.traits }, lastTrait: this.lastTrait };
     const readout = [
       `${outcome}: bullet ${hell ? 'hell' : 'heaven'}`,
       `was ${n.startMood}`,
@@ -909,15 +972,15 @@ export class GameScene extends Phaser.Scene {
       e.disableBody(true, true);
     }
     if (TUTORIAL_ONLY) {
-      this.time.delayedCall(TUTORIAL_REPEAT_MS, () => this.scene.restart());
+      this.time.delayedCall(TUTORIAL_REPEAT_MS, () => this.scene.restart({}));
       return;
     }
     this.tutorial = false;
     this.mode = hell ? 'hell' : 'heaven';
     this.stats.damage *= 1 + RAGE_DAMAGE * this.trait('rage');
-    this.cameras.main.setBackgroundColor('rgba(0,0,0,0)');
     this.grid.setVisible(true).setAlpha(0);
     this.tweens.add({ targets: this.grid, alpha: 1, duration: 1200 });
+    this.tweens.addCounter({ from: 0, to: 1, duration: 1200, onUpdate: (tw) => this.setBackdrop(lerpColor(0x000000, FIELD_COLOUR, tw.getValue() ?? 1)) });
     this.spawnTimer = 1.5;
   }
 
@@ -1096,6 +1159,9 @@ export class GameScene extends Phaser.Scene {
     const t = this.strongestTrait();
     if (!t) return;
     this.abilityCooldown = ABILITY_COOLDOWN;
+    sfx.power(POWER_NAMES[t] as 'brace' | 'phase' | 'burst');
+    this.powerRing(TRAIT_COLOURS[t]);
+    if (labelsOn()) this.ui.floatWord(POWER_NAMES[t]);
     if (t === 'calm') {
       this.phaseLeft = PHASE_SECONDS;
       this.lastAbility = 'phase';
@@ -1103,12 +1169,26 @@ export class GameScene extends Phaser.Scene {
       this.braceLeft = BRACE_SECONDS;
       this.lastAbility = 'brace';
     } else {
-      sfx.shoot();
       for (let i = 0; i < BURST_SHOTS; i++) {
         this.shoot((i / BURST_SHOTS) * Math.PI * 2, this.stats.bulletSpeed, this.stats.range / this.stats.bulletSpeed + 0.15, false);
       }
       this.lastAbility = 'burst';
     }
+  }
+
+  /** Using a power: a ring in its colour swells out from the core and fades. */
+  private powerRing(colour: number) {
+    this.tweens.addCounter({
+      from: 0,
+      to: 1,
+      duration: 480,
+      ease: 'Cubic.Out',
+      onUpdate: (tw) => {
+        const p = tw.getValue() ?? 1;
+        this.powerFx.clear().lineStyle(3 * (1 - p) + 1, colour, 0.85 * (1 - p)).strokeCircle(this.player.x, this.player.y, 18 + 80 * p);
+      },
+      onComplete: () => this.powerFx.clear(),
+    });
   }
 
   private setAnger(a: number) {
@@ -1126,12 +1206,12 @@ export class GameScene extends Phaser.Scene {
       const e = obj as Sprite;
       if (!e.active) continue;
       let cd = (e.getData('shootCd') as number) - dt;
-      if (cd <= 0 && view.contains(e.x, e.y)) {
+      if (cd <= 0 && this.phaseLeft <= 0 && view.contains(e.x, e.y)) {
         cd = Phaser.Math.FloatBetween(...ENEMY_SHOT_GAP);
         const b = this.enemyBullets.get() as Sprite | null;
         if (b) {
           b.enableBody(true, e.x, e.y, true, true);
-          b.setScale(SPRITE_SCALE).setCircle(5 * T, 3 * T, 3 * T).setDepth(5).setTint(0xf43f5e);
+          b.setScale(SPRITE_SCALE).setCircle(5 * T, 3 * T, 3 * T).setDepth(5);
           const angle = Phaser.Math.Angle.Between(e.x, e.y, this.player.x, this.player.y);
           this.physics.velocityFromRotation(angle, ENEMY_SHOT_SPEED, (b.body as Phaser.Physics.Arcade.Body).velocity);
           b.setData('life', ENEMY_SHOT_LIFE);
@@ -1201,6 +1281,7 @@ export class GameScene extends Phaser.Scene {
     this.frozen = true;
     this.physics.pause();
     this.ui.updateHud(this.hudState());
+    restHum(true);
     sfx.levelUp();
     this.ui.showLevelUp(rollUpgrades(3, this.stats), (upgrade) => {
       upgrade.apply(this.stats, { heal: (n) => (this.hp = Math.min(this.stats.maxHp, this.hp + n)) });
@@ -1210,6 +1291,7 @@ export class GameScene extends Phaser.Scene {
       } else {
         this.frozen = false;
         this.physics.resume();
+        restHum(false);
       }
     });
   }
@@ -1222,7 +1304,8 @@ export class GameScene extends Phaser.Scene {
     this.ui.updateHud(this.hudState());
     sfx.gameOver();
     const newBest = recordRun({ time: this.elapsed, level: this.level, kills: this.kills });
-    this.ui.showGameOver(this.hudState(), newBest, () => this.scene.restart());
+    const outcome = this.outcome;
+    this.ui.showGameOver(this.hudState(), newBest, outcome ? () => this.scene.restart({ resume: outcome }) : null, () => this.scene.restart({}));
   }
 }
 

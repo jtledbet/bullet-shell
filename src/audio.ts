@@ -199,6 +199,23 @@ export const sfx = {
       for (const [hz, vol] of [[110, 0.07], [165, 0.05], [220, 0.04], [330, 0.025]]) tone(t, 'triangle', hz, hz, 2.6, vol, 0.9);
     }
   },
+  /** Using your power. Brace: a heavy clank. Phase: a breath of air. Burst: a snarl under the shots. */
+  power(kind: 'brace' | 'phase' | 'burst') {
+    const t = begin('power', 0.2);
+    if (t === null) return;
+    if (kind === 'brace') {
+      noise(t, 0.05, 0.12, 2600, 'bandpass');
+      tone(t, 'triangle', 190, 85, 0.3, 0.16);
+      tone(t, 'sine', 880, 860, 0.5, 0.03);
+    } else if (kind === 'phase') {
+      noise(t, 0.6, 0.06, 1800, 'bandpass', 0.2);
+      tone(t, 'sine', 520, 1040, 0.5, 0.04, 0.15);
+    } else {
+      noise(t, 0.05, 0.1, 4000, 'highpass');
+      tone(t, 'sawtooth', 240, 70, 0.3, 0.07);
+      tone(t, 'sine', 130, 50, 0.25, 0.16);
+    }
+  },
   /** The ability, first showing after the tutorial: a quiet two-note chime. */
   ready() {
     const t = begin('ready', 0.5);

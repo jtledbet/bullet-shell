@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import { audioState, playCounts } from './audio';
 import { musicState } from './music';
-import { pixelRatio } from './display';
+import { lowerQuality, pixelRatio } from './display';
+import { canFullscreen, toggleFullscreen } from './fullscreen';
 import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
 import { UIScene } from './scenes/UIScene';
@@ -45,6 +46,36 @@ function fit() {
   if (w !== game.scale.width || h !== game.scale.height) game.scale.resize(w, h);
 }
 game.events.on(Phaser.Core.Events.POST_STEP, fit);
+
+// A machine that can't keep up: when frames stay slow for several seconds, draw fewer pixels.
+// `?fullres` turns this off (test scripts use it).
+const SLOW_FRAME_MS = 28;
+const WATCH_MS = 3000;
+const watchSpeed = !new URLSearchParams(window.location.search).has('fullres');
+let watched = 0;
+let frames = 0;
+let slowSpells = 0;
+game.events.on(Phaser.Core.Events.POST_STEP, () => {
+  if (!watchSpeed || document.hidden || !document.hasFocus()) return void (watched = frames = 0);
+  const ms = game.loop.rawDelta;
+  // A one-off hitch (a tab switch, a load) isn't a trend.
+  if (ms > 250) return;
+  watched += ms;
+  frames++;
+  if (watched < WATCH_MS) return;
+  slowSpells = watched / frames > SLOW_FRAME_MS ? slowSpells + 1 : 0;
+  watched = frames = 0;
+  if (slowSpells < 2) return;
+  slowSpells = 0;
+  if (lowerQuality()) console.info(`bullet shell: slow frames, drawing at ${pixelRatio().toFixed(2)}x`);
+});
+
+// The "turn your phone" screen's fullscreen button: fullscreen locks to landscape where the browser allows.
+const rotateFull = document.getElementById('rotate-full');
+if (rotateFull) {
+  if (canFullscreen()) rotateFull.addEventListener('click', toggleFullscreen);
+  else rotateFull.remove();
+}
 
 // Dev-only handle for poking at state from the console or test scripts.
 if (import.meta.env.DEV) Object.assign(window, { game, audioDebug: () => ({ state: audioState(), counts: { ...playCounts }, music: musicState() }) });

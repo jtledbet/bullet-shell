@@ -133,12 +133,17 @@ const BOSSA: Track = (() => {
     play(v, step, t, eighth) {
       const bar = Math.floor(step / 8);
       const pos = step % 8;
-      if (pos === 0) v.tone(t, roots[bar], eighth * 2.6, 0.24, 'sine', 500);
-      if (pos === 3 || pos === 4) v.tone(t, fifths[bar], eighth * 0.9, 0.2, 'sine', 500);
-      if (pos === 7) v.tone(t, roots[bar], eighth * 0.9, 0.18, 'sine', 500);
+      // Each bass note is doubled an octave up, quietly: phone speakers can't sound the low one at all.
+      const bass = (note: number, len: number, vol: number) => {
+        v.tone(t, note, eighth * len, vol, 'sine', 500);
+        v.tone(t, note + 12, eighth * len, vol * 0.4, 'triangle', 1100);
+      };
+      if (pos === 0) bass(roots[bar], 2.6, 0.24);
+      if (pos === 3 || pos === 4) bass(fifths[bar], 0.9, 0.2);
+      if (pos === 7) bass(roots[bar], 0.9, 0.18);
       if (pos === 0 || pos === 4) v.kick(t, 0.12);
-      if (comp.has(step % 16)) v.chord(t, chords[bar], 0.3, 0.04, 'triangle', 2000, 0.014);
-      v.tick(t, 0.04, pos % 2 ? 0.03 : 0.018, 'highpass', 7000);
+      if (comp.has(step % 16)) v.chord(t, chords[bar], 0.3, 0.085, 'triangle', 2000, 0.014);
+      v.tick(t, 0.04, pos % 2 ? 0.045 : 0.028, 'highpass', 7000);
     },
   };
 })();
@@ -159,7 +164,7 @@ export function refreshMusic() {
   if (should && !playing) start(out!.ctx, out!.master);
   else if (!should && playing) stop();
   // The hum gives way to the pause music.
-  const shouldHum = humWanted && !wanted && audible;
+  const shouldHum = humWanted && !humResting && !wanted && audible;
   if (shouldHum && !hum) startHum(out!.ctx, out!.master);
   else if (!shouldHum && hum) stopHum();
 }
@@ -177,13 +182,21 @@ const HUM_FADE = 0.6;
 const HUM_GLIDE = 0.35;
 
 let humWanted = false;
+let humResting = false;
 let danger = 0;
 let hum: { out: GainNode; filter: BiquadFilterNode; rumble: GainNode; dissonance: GainNode; lfo: OscillatorNode; depth: GainNode; oscs: OscillatorNode[] } | undefined;
 
 /** Called with true when a game starts and false when it ends. */
 export function setHum(on: boolean) {
   humWanted = on;
+  humResting = false;
   if (on) danger = 0;
+  refreshMusic();
+}
+
+/** The hum rests while a level-up choice is on screen, and comes back where it left off. */
+export function restHum(on: boolean) {
+  humResting = on;
   refreshMusic();
 }
 

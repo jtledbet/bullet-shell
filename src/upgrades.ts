@@ -45,7 +45,7 @@ export const UPGRADES: Upgrade[] = [
   { name: 'Heavy Rounds', desc: '+50% damage', apply: (s) => (s.damage *= 1.5) },
   { name: 'Split Shot', desc: '+1 projectile', apply: (s) => (s.multishot += 1) },
   { name: 'Piercing', desc: 'Shots pass through +1 enemy', apply: (s) => (s.pierce += 1) },
-  { name: 'Fleet Foot', desc: '+12% move speed', apply: (s) => (s.speed *= 1.12) },
+  { name: 'Fleet of Foot', desc: '+12% move speed', apply: (s) => (s.speed *= 1.12) },
   {
     name: 'Plating',
     desc: '+20 max HP and heal 20',
