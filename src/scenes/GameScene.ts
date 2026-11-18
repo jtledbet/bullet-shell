@@ -168,6 +168,11 @@ export interface HudState {
   level: number;
   kills: number;
   elapsed: number;
+  /**
+   * Gem radar: when no gem is on screen, where the player sits in the view (0..1 across and
+   * down) and the direction to the nearest gem. Null while a gem is visible, or there are none.
+   */
+  gemArrow: { px: number; py: number; angle: number } | null;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -454,6 +459,26 @@ export class GameScene extends Phaser.Scene {
       level: this.level,
       kills: this.kills,
       elapsed: this.elapsed,
+      gemArrow: this.gemArrow(),
+    };
+  }
+
+  private gemArrow(): HudState['gemArrow'] {
+    const view = this.cameras.main.worldView;
+    let nearest: Sprite | undefined;
+    let best = Infinity;
+    for (const obj of this.gems.getChildren()) {
+      const g = obj as Sprite;
+      if (!g.active) continue;
+      if (view.contains(g.x, g.y)) return null;
+      const d = Phaser.Math.Distance.Squared(this.player.x, this.player.y, g.x, g.y);
+      if (d < best) [best, nearest] = [d, g];
+    }
+    if (!nearest) return null;
+    return {
+      px: (this.player.x - view.x) / view.width,
+      py: (this.player.y - view.y) / view.height,
+      angle: Phaser.Math.Angle.Between(this.player.x, this.player.y, nearest.x, nearest.y),
     };
   }
 

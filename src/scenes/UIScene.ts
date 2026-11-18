@@ -8,6 +8,10 @@ import type { HudState } from './GameScene';
 import type { Upgrade } from '../upgrades';
 
 const PAD = 32; // clears rounded corners and notches in landscape
+/** Gem radar: how far in from the screen edge the arrow sits, its size, and how strongly it shows. */
+const RADAR_INSET = 22;
+const RADAR_SIZE = 9;
+const RADAR_ALPHA = 0.7;
 /** Ignore taps on a fresh menu briefly, so a thumb lifting mid-fight can't pick for you. */
 const MENU_ARM_MS = 400;
 const FONT = 'system-ui, sans-serif';
@@ -46,6 +50,7 @@ export class UIScene extends Phaser.Scene {
   sticks?: TwinStick;
   onPauseRequested?: () => void;
   private hud!: Phaser.GameObjects.Graphics;
+  private radar!: Phaser.GameObjects.Graphics;
   private pauseBtn!: Phaser.GameObjects.Container;
   /** Only where fullscreen is supported. */
   private fsBtn?: Phaser.GameObjects.Container;
@@ -81,6 +86,7 @@ export class UIScene extends Phaser.Scene {
     this.events.once('shutdown', () => this.scale.off('resize', this.onResize, this));
     this.sticks = new TwinStick(this);
     this.hud = this.add.graphics();
+    this.radar = this.add.graphics();
     this.info = this.label(PAD, PAD + 22, '', { fontSize: '15px', color: '#cbd5e1' });
 
     const pauseBg = this.add.rectangle(0, 0, 44, 44, 0x1e293b, 0.7).setStrokeStyle(2, 0x334155);
@@ -144,6 +150,36 @@ export class UIScene extends Phaser.Scene {
     g.fillStyle(0x4ade80).fillRect(0, 0, (s.xp / s.xpNext) * w, 5);
 
     this.info.setText(`Lv ${s.level}   ${clock(s.elapsed)}   ${s.kills} kills`);
+    this.drawRadar(s.gemArrow);
+  }
+
+  /** A small green arrow at the screen edge, on the line from the player toward the nearest off-screen gem. */
+  private drawRadar(arrow: HudState['gemArrow']) {
+    const g = this.radar.clear();
+    if (!arrow) return;
+    const { w, h } = this;
+    const m = RADAR_INSET;
+    const ox = Phaser.Math.Clamp(arrow.px * w, m, w - m);
+    const oy = Phaser.Math.Clamp(arrow.py * h, m, h - m);
+    const dx = Math.cos(arrow.angle);
+    const dy = Math.sin(arrow.angle);
+    // Walk from the player along the direction until the inset edge.
+    const tx = dx > 0 ? (w - m - ox) / dx : dx < 0 ? (m - ox) / dx : Infinity;
+    const ty = dy > 0 ? (h - m - oy) / dy : dy < 0 ? (m - oy) / dy : Infinity;
+    const t = Math.min(tx, ty);
+    const x = ox + dx * t;
+    const y = oy + dy * t;
+    const s = RADAR_SIZE;
+    const side = arrow.angle + Math.PI / 2;
+    // Long and narrow, so the point reads clearly at any angle.
+    const bx = x - dx * s;
+    const by = y - dy * s;
+    const half = s * 0.55;
+    g.fillStyle(0x4ade80, RADAR_ALPHA).fillTriangle(
+      x + dx * s, y + dy * s,
+      bx + Math.cos(side) * half, by + Math.sin(side) * half,
+      bx - Math.cos(side) * half, by - Math.sin(side) * half,
+    );
   }
 
   showLevelUp(choices: Upgrade[], onPick: (u: Upgrade) => void) {
