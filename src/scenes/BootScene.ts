@@ -12,19 +12,20 @@ export class BootScene extends Phaser.Scene {
     // Sizes below are world units; everything is drawn S times larger (see TEX_SCALE).
     const tex = (key: string, size: number) => g.generateTexture(key, size * S, size * S).clear();
 
-    // The player: a ball of violet plasma, white-hot at the centre, no outline.
+    // The core: a plain white orb with a soft edge. It takes its colour from what it does.
     this.glow('player', 32, [
       [0, 'rgba(255,255,255,1)'],
-      [0.1, 'rgba(237,233,254,1)'],
-      [0.4, 'rgba(167,139,250,1)'],
-      [0.78, 'rgba(139,92,246,0.5)'],
-      [1, 'rgba(124,58,237,0)'],
+      [0.55, 'rgba(250,250,252,1)'],
+      [0.74, 'rgba(232,234,242,1)'],
+      [0.82, 'rgba(214,218,232,0.85)'],
+      [0.9, 'rgba(200,206,226,0.3)'],
+      [1, 'rgba(200,206,226,0)'],
     ]);
-    // Softer wisps that roil around it and trail behind it.
+    // What trails behind it as it moves. White, so it takes the core's colour.
     this.glow('plasma', 32, [
-      [0, 'rgba(167,139,250,0.75)'],
-      [0.5, 'rgba(139,92,246,0.3)'],
-      [1, 'rgba(124,58,237,0)'],
+      [0, 'rgba(255,255,255,0.6)'],
+      [0.5, 'rgba(255,255,255,0.22)'],
+      [1, 'rgba(255,255,255,0)'],
     ]);
 
     // The pause menu's build orb: a soft white glow that takes a tint.

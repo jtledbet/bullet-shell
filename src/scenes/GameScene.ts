@@ -1,10 +1,11 @@
 import Phaser from 'phaser';
 import type { UIScene } from './UIScene';
+import { Face } from '../face';
 import { sfx } from '../audio';
 import { pixelRatio, TEX_SCALE } from '../display';
 import { restHum, setDanger, setHum, setPauseMusic } from '../music';
 import { labelsOn, recordRun, setLabels } from '../storage';
-import { POWER_NAMES, TRAIT_COLOURS, type Trait } from '../traits';
+import { CORE_COLOURS, CORE_WHITE, POWER_NAMES, TRAIT_COLOURS, type Trait } from '../traits';
 import { baseStats, rollUpgrades, type Stats } from '../upgrades';
 
 type Sprite = Phaser.Physics.Arcade.Sprite;
@@ -24,8 +25,50 @@ const GRID_COLOUR = 0x1e293b;
 const FIELD_COLOUR = 0x0b1222;
 /** The first level-up comes quickly; after that the curve takes over. */
 const FIRST_LEVEL_XP = 3;
-/** Your bolts take this colour. */
-const SHOT_TINT = 0xd8ccff;
+/**
+ * The core starts plain white. Each trait point tints it a little at once (and shifts its
+ * face); the rest of the way comes very slowly, over this many seconds of a run.
+ */
+const STEEP_PER_POINT = 0.1;
+const STEEP_SECONDS = 240;
+/** How scared the core's face is with nothing wrong: flat, a little wide-eyed. */
+const BASE_FEAR = 0.22;
+/** Fear: enemies within this range crowd you, and this many is as crowded as it gets. It looks at the nearest enemy within LOOK_RADIUS. */
+const CROWD_RADIUS = 150;
+const CROWD_FULL = 8;
+const LOOK_RADIUS = 420;
+/**
+ * What seeds and enemies think: a tiny vocabulary, shown over their heads.
+ * Curious and wary are standing thoughts; the rest come at moments.
+ */
+const THOUGHTS = {
+  curious: '?',
+  closer: 'what is that',
+  wary: '...',
+  flinch: 'no no no',
+  angry: '#@!%',
+  shot: '!',
+  ignored: 'hey',
+  fedUp: 'HEY',
+  baffled: '?',
+} as const;
+const THOUGHT_SECONDS = 1.6;
+const THOUGHT_POOL = 24;
+/** Standing idle this long gets a "hey" from the seeds, before they lose patience at IDLE_IRRITATE_SECONDS. */
+const IDLE_HEY_SECONDS = 18;
+/** A curious seed wonders aloud once you come this close. An angry one swears once it is this close. */
+const CURIOUS_CLOSER = 150;
+const ANGRY_CLOSE = 200;
+/**
+ * Phasing: enemies this close are baffled (they stop, puzzled); farther ones wander off.
+ * Both find you again a little after you come back.
+ */
+const BAFFLE_RADIUS = 280;
+/** Damage numbers: how many at once, how far they rise, how long they last. Damage shows times ten (a base hit reads "10"). */
+const DAMAGE_POOL = 24;
+const DAMAGE_RISE = 26;
+const DAMAGE_SECONDS = 0.7;
+const DAMAGE_SHOWN_TIMES = 10;
 /** Visible world area held constant across screen sizes, so no device sees more of the arena. */
 const VIEW_AREA = 960 * 540;
 /**
@@ -60,8 +103,7 @@ const SHOTGUN_SPEED = 620;
 const FLECKS_PER_SECOND = 0.8;
 const FLECKS_ON_KILL = 9;
 
-/** The player's plasma: wisps roiling around the centre, and a trail while moving. */
-const PLASMA_WISPS = 4;
+/** The core leaves a faint trail while moving faster than this. */
 const TRAIL_MIN_SPEED = 20;
 
 /** Enemies vary in toughness around the current base health, by up to this factor either way. */
@@ -223,6 +265,16 @@ export interface HudState {
   ability: { trait: Trait; charge: number } | null;
 }
 
+/** A thought over a seed's or enemy's head. */
+interface Thought {
+  text: Phaser.GameObjects.Text;
+  on: Sprite | null;
+  left: number;
+  shake: boolean;
+  held: boolean;
+  colour: string;
+}
+
 /** What orientation decided. Kept so the next run can start right after it. */
 interface Outcome {
   mode: 'heaven' | 'hell';
@@ -278,8 +330,17 @@ export class GameScene extends Phaser.Scene {
   private anger = 0;
   private angerOverlay!: Phaser.GameObjects.Image;
   private enemyBullets!: Phaser.Physics.Arcade.Group;
-  /** Dev builds only: names the tutorial enemy's temperament above it. */
-  private moodLabels: Phaser.GameObjects.Text[] = [];
+  private thoughts: Thought[] = [];
+  private damageTexts: Phaser.GameObjects.Text[] = [];
+  private face!: Face;
+  /** 0..1: how far the core's colour and face have moved from plain white toward what it has become. */
+  private steep = 0;
+  private fear = BASE_FEAR;
+  private coreColour = CORE_WHITE;
+  /** How far along the seed being taken in is, this frame (the core closes its eyes). */
+  private absorbing = 0;
+  /** Whether the seeds have said "hey" during this idle spell. */
+  private heyed = false;
   /** Brood seeds scheduled to pop up but not out yet; the tutorial can't end while any are pending. */
   private pendingSeeds = 0;
   /** Tutorial: seconds standing idle, whether that has irritated the seeds, bumps taken, and the current bump. */
@@ -301,7 +362,6 @@ export class GameScene extends Phaser.Scene {
   /** Last ability used, for test scripts and the dev readout. */
   lastAbility: 'phase' | 'brace' | 'burst' | null = null;
   private hardEdge!: Phaser.GameObjects.Graphics;
-  private wisps: Phaser.GameObjects.Image[] = [];
   private trail!: Phaser.GameObjects.Particles.ParticleEmitter;
   private flecks!: Phaser.GameObjects.Particles.ParticleEmitter;
   private hadFocus = true;
@@ -335,8 +395,12 @@ export class GameScene extends Phaser.Scene {
     this.lastTrait = resume?.lastTrait ?? null;
     this.lastAbility = null;
     if (resume) this.stats.damage *= 1 + RAGE_DAMAGE * this.trait('rage');
+    this.steep = Math.min(1, STEEP_PER_POINT * (this.traits.hard + this.traits.calm + this.traits.rage));
+    this.fear = BASE_FEAR;
+    this.coreColour = CORE_WHITE;
+    this.absorbing = 0;
+    this.heyed = false;
     this.abilityCooldown = this.phaseLeft = this.braceLeft = 0;
-    this.moodLabels = [];
     setPauseMusic(false);
     setHum(true);
     this.physics.resume();
@@ -351,15 +415,12 @@ export class GameScene extends Phaser.Scene {
     this.player = this.physics.add.sprite(START, START, 'player').setDepth(10).setScale(SPRITE_SCALE);
     this.player.setCircle(13 * T, 3 * T, 3 * T);
     this.angerOverlay = this.add.image(START, START, 'player').setTintFill(0xf43f5e).setDepth(11).setAlpha(0);
-    this.wisps = Array.from({ length: PLASMA_WISPS }, (_, i) =>
-      this.add.image(START, START, 'plasma').setBlendMode(Phaser.BlendModes.ADD).setDepth(10.5).setData('phase', (i / PLASMA_WISPS) * Math.PI * 2),
-    );
     this.trail = this.add.particles(0, 0, 'plasma', {
       follow: this.player,
-      lifespan: 380,
-      frequency: 14,
-      scale: { start: 0.7 * SPRITE_SCALE, end: 0.1 * SPRITE_SCALE },
-      alpha: { start: 0.4, end: 0 },
+      lifespan: 300,
+      frequency: 40,
+      scale: { start: 0.6 * SPRITE_SCALE, end: 0.1 * SPRITE_SCALE },
+      alpha: { start: 0.35, end: 0 },
       blendMode: Phaser.BlendModes.ADD,
       emitting: false,
     }).setDepth(9);
@@ -375,6 +436,23 @@ export class GameScene extends Phaser.Scene {
     }).setDepth(4.5);
     this.setAnger(0);
     this.hardEdge = this.add.graphics().setDepth(12);
+    this.face = new Face(this, 10.6);
+    const small = { fontFamily: 'system-ui, sans-serif', resolution: pixelRatio() * 2 };
+    this.thoughts = Array.from({ length: THOUGHT_POOL }, () => ({
+      text: this.add.text(0, 0, '', { ...small, fontSize: '9px', color: '#cbd5e1' }).setOrigin(0.5, 1).setDepth(20).setVisible(false),
+      on: null,
+      left: 0,
+      shake: false,
+      held: false,
+      colour: '#cbd5e1',
+    }));
+    this.damageTexts = Array.from({ length: DAMAGE_POOL }, () =>
+      this.add
+        .text(0, 0, '', { ...small, fontSize: '10px', fontStyle: 'bold', color: '#ffffff', stroke: '#0b1222', strokeThickness: 2 })
+        .setOrigin(0.5, 1)
+        .setDepth(21)
+        .setVisible(false),
+    );
 
     this.enemies = this.physics.add.group({ defaultKey: 'enemy', maxSize: 400 });
     this.bullets = this.physics.add.group({ defaultKey: 'bolt', maxSize: 300 });
@@ -507,12 +585,12 @@ export class GameScene extends Phaser.Scene {
     const flicker = this.invuln > 0 && Math.floor(this.invuln * 12) % 2 ? 0.35 : 1;
     this.player.setAlpha(this.ghostAlpha() * flicker * (this.phaseLeft > 0 ? 0.35 : 1));
     this.drawHardEdge();
-    this.drawPlasma();
+    this.updateCore(dt);
     this.shedFlecks(dt);
     this.angerOverlay.setPosition(this.player.x, this.player.y).setAlpha(ANGER_RED * this.anger * this.player.alpha);
 
     this.ui.updateHud(this.hudState());
-    this.updateMoodLabel();
+    this.updateThoughts(dt);
     this.followGrid(dt);
   }
 
@@ -526,18 +604,79 @@ export class GameScene extends Phaser.Scene {
     this.grid.setPosition(snap(v.centerX) + Math.cos(this.blastAngle) * k, snap(v.centerY) + Math.sin(this.blastAngle) * k);
   }
 
-  /** Dev builds or `?labels`: keeps a temperament label over each tutorial seed. */
-  private updateMoodLabel() {
-    const seeds = this.tutorial && labelsOn() ? (this.enemies.getChildren().filter((o) => o.active) as Sprite[]) : [];
-    while (this.moodLabels.length < seeds.length) {
-      const style = { fontFamily: 'system-ui, sans-serif', fontSize: '9px', color: '#94a3b8', resolution: pixelRatio() * 2 };
-      this.moodLabels.push(this.add.text(0, 0, '', style).setOrigin(0.5, 1).setDepth(20));
+  /**
+   * A seed or an enemy thinks something: a few small characters over its head for a moment.
+   * With labels on, every thought shows. With them off, only the critical ones do: the ones
+   * that tell you something has changed for you. `held` is a seed's standing thought, shown
+   * steadily (labels on) and stepped aside for anything passing.
+   */
+  private think(e: Sprite, words: string, opts: { critical?: boolean; shake?: boolean; seconds?: number; held?: boolean } = {}) {
+    if (!opts.critical && !labelsOn()) return;
+    let t = this.thoughts.find((x) => x.on === e);
+    if (t && !t.held && opts.held) return;
+    t ??= this.thoughts.find((x) => !x.on);
+    if (!t) return;
+    t.on = e;
+    t.left = opts.seconds ?? THOUGHT_SECONDS;
+    t.shake = !!opts.shake;
+    t.held = !!opts.held;
+    t.text.setText(words).setVisible(true);
+    const colour = opts.shake ? '#fda4af' : '#cbd5e1';
+    if (t.colour !== colour) t.text.setColor((t.colour = colour));
+  }
+
+  /** Sprites are reused: a new seed or enemy must not inherit the last one's thought. */
+  private forget(e: Sprite) {
+    const t = this.thoughts.find((x) => x.on === e);
+    if (!t) return;
+    t.on = null;
+    t.text.setVisible(false);
+  }
+
+  /** Keeps each thought over its owner's head, shaking the angry ones, and fades it out. */
+  private updateThoughts(dt: number) {
+    if (this.tutorial && labelsOn()) {
+      for (const obj of this.enemies.getChildren()) {
+        const e = obj as Sprite;
+        if (!e.active) continue;
+        const mood = e.getData('mood') as Mood;
+        const words = mood === 'aggro' ? THOUGHTS.angry : mood === 'skeptical' ? THOUGHTS.wary : THOUGHTS.curious;
+        this.think(e, words, { held: true, shake: mood === 'aggro', seconds: 0.25 });
+      }
     }
-    this.moodLabels.forEach((label, i) => {
-      const e = seeds[i];
-      label.setVisible(!!e);
-      if (e) label.setText(e.getData('mood')).setPosition(e.x, e.y - 16 * (e.scaleX / SPRITE_SCALE));
-    });
+    for (const t of this.thoughts) {
+      const e = t.on;
+      if (!e) continue;
+      t.left -= dt;
+      if (t.left <= 0 || !e.active) {
+        t.on = null;
+        t.text.setVisible(false);
+        continue;
+      }
+      const j = t.shake ? 0.7 : 0;
+      t.text
+        .setPosition(e.x + Phaser.Math.FloatBetween(-j, j), e.y - 17 * (e.scaleY / SPRITE_SCALE) + Phaser.Math.FloatBetween(-j, j))
+        .setAngle(t.shake ? Phaser.Math.FloatBetween(-5, 5) : 0)
+        .setAlpha(t.held ? 0.9 : Math.min(1, t.left / 0.3));
+    }
+  }
+
+  /** The damage a shot did, floating up off the enemy and fading. Not shown during orientation. */
+  private showDamage(e: Sprite, amount: number) {
+    if (this.tutorial) return;
+    const t = this.damageTexts.find((x) => !x.visible);
+    if (!t) return;
+    // Bigger hits run hotter and larger.
+    const hot = Phaser.Math.Clamp((amount - 1) / 3, 0, 1);
+    const low = lerpColor(0xfde68a, 0xf97316, hot);
+    t.setText(String(Math.round(amount * DAMAGE_SHOWN_TIMES)))
+      .setTint(0xffffff, 0xffffff, low, low)
+      .setPosition(e.x + Phaser.Math.FloatBetween(-7, 7), e.y - 10)
+      .setAngle(Phaser.Math.FloatBetween(-9, 9))
+      .setScale(1 + 0.5 * hot)
+      .setAlpha(1)
+      .setVisible(true);
+    this.tweens.add({ targets: t, y: t.y - DAMAGE_RISE, alpha: 0, duration: DAMAGE_SECONDS * 1000, ease: 'Cubic.Out', onComplete: () => t.setVisible(false) });
   }
 
   private fitZoom() {
@@ -620,15 +759,23 @@ export class GameScene extends Phaser.Scene {
     const seeds = this.enemies.getChildren().filter((o) => o.active) as Sprite[];
     if (!seeds.length) return;
     const moving = this.moveVec.lengthSq() > 0.01;
-    if (moving) GameScene.acted = true;
+    if (moving) {
+      GameScene.acted = true;
+      this.heyed = false;
+    }
     this.idleTime = moving ? 0 : this.idleTime + dt;
     if (!GameScene.acted && this.nudges < NUDGE_SECONDS.length && this.idleTime >= NUDGE_SECONDS[this.nudges]) {
       this.nudge(this.nudges++, seeds);
+    }
+    if (this.idleTime >= IDLE_HEY_SECONDS && !this.heyed && !this.irritated) {
+      this.heyed = true;
+      for (const e of seeds) this.think(e, THOUGHTS.ignored, { critical: true });
     }
     if (this.idleTime >= IDLE_IRRITATE_SECONDS && !this.irritated) {
       this.irritated = true;
       for (const e of seeds) {
         e.setData('irritated', true);
+        this.think(e, THOUGHTS.fedUp, { critical: true, shake: true, seconds: 2 });
         if (e.getData('mood') === 'aggro') continue;
         e.setData('mood', 'aggro');
         this.showMood(e, true);
@@ -757,7 +904,7 @@ export class GameScene extends Phaser.Scene {
     b.setTexture(pellet ? 'spark' : 'bolt').setOrigin(22 / 32, 0.5).setRotation(angle).setBlendMode(Phaser.BlendModes.ADD);
     b.setScale(pellet ? SPRITE_SCALE * 0.7 : SPRITE_SCALE).setCircle(5 * T, 17 * T, 3 * T).setDepth(5);
     if (pellet) b.clearTint();
-    else b.setTint(SHOT_TINT);
+    else b.setTint(lerpColor(this.coreColour, 0xffffff, 0.3));
     this.physics.velocityFromRotation(angle, speed, (b.body as Phaser.Physics.Arcade.Body).velocity);
     // Reuse the pooled bullet's hit set rather than allocating one per shot.
     const hits = (b.getData('hits') as Set<Sprite> | undefined) ?? new Set<Sprite>();
@@ -796,6 +943,7 @@ export class GameScene extends Phaser.Scene {
     const e = this.enemies.get() as Sprite | null;
     if (!e) return;
     e.enableBody(true, x, y, true, true);
+    this.forget(e);
     e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false).setAlpha(1).setAngle(0);
     // Darker red means tougher.
     const hp = (3 + this.elapsed / 25) * Phaser.Math.FloatBetween(...TOUGHNESS_SPREAD);
@@ -804,6 +952,7 @@ export class GameScene extends Phaser.Scene {
     e.setData({
       mood: 'chase',
       tint,
+      lost: 0,
       absorb: 0,
       shootCd: Phaser.Math.FloatBetween(...ENEMY_SHOT_GAP),
       hp,
@@ -824,8 +973,35 @@ export class GameScene extends Phaser.Scene {
       else if (mood === 'curious') this.steerCurious(e);
       else if (mood === 'skeptical') {
         if (!this.flinch(e)) this.steerWander(e, dt, true);
-      } else if (this.phaseLeft <= 0) this.physics.moveToObject(e, this.player, e.getData('speed'));
-      // While you phase, enemies lose you: they carry on the way they were going.
+      } else this.steerChaser(e, dt, mood);
+    }
+  }
+
+  /** Comes straight at you, unless it has lost you: a baffled one stands puzzled, the others keep wandering the way they turned. */
+  private steerChaser(e: Sprite, dt: number, mood: Mood) {
+    const lost = e.getData('lost') as number;
+    if (lost > 0) {
+      e.setData('lost', lost - dt);
+      if (e.getData('baffled')) e.setVelocity(0, 0);
+      return;
+    }
+    this.physics.moveToObject(e, this.player, e.getData('speed'));
+    // An angry seed swears once, when it gets close.
+    if (mood !== 'aggro' || e.getData('swore')) return;
+    if (Phaser.Math.Distance.Squared(e.x, e.y, this.player.x, this.player.y) > ANGRY_CLOSE * ANGRY_CLOSE) return;
+    e.setData('swore', true);
+    this.think(e, THOUGHTS.angry, { critical: true, shake: true });
+  }
+
+  /** Phasing: nearby enemies are baffled, farther ones wander off. They find you again a little after you return. */
+  private loseEnemies() {
+    for (const obj of this.enemies.getChildren()) {
+      const e = obj as Sprite;
+      if (!e.active) continue;
+      const near = Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y) < BAFFLE_RADIUS;
+      e.setData({ lost: PHASE_SECONDS + (near ? Phaser.Math.FloatBetween(0.3, 0.9) : Phaser.Math.FloatBetween(1, 2.2)), baffled: near });
+      if (near) this.think(e, THOUGHTS.baffled, { critical: true, seconds: PHASE_SECONDS + 0.3 });
+      else this.physics.velocityFromRotation(Math.random() * Math.PI * 2, (e.getData('speed') as number) * 0.4, (e.body as Phaser.Physics.Arcade.Body).velocity);
     }
   }
 
@@ -833,6 +1009,10 @@ export class GameScene extends Phaser.Scene {
   private steerCurious(e: Sprite) {
     const d = Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y);
     const toward = Phaser.Math.Angle.Between(e.x, e.y, this.player.x, this.player.y);
+    if (d < CURIOUS_CLOSER && !e.getData('noticed')) {
+      e.setData('noticed', true);
+      this.think(e, THOUGHTS.closer, { seconds: 2 });
+    }
     const bob = CURIOUS_BOB * Math.sin((this.time.now / 1000) * 2.6 + (e.getData('phase') as number));
     this.physics.velocityFromRotation(toward, (d > CURIOUS_NEAR ? CURIOUS_DRIFT : 0) + bob, (e.body as Phaser.Physics.Arcade.Body).velocity);
   }
@@ -846,6 +1026,7 @@ export class GameScene extends Phaser.Scene {
     const away = Phaser.Math.Angle.Between(this.player.x, this.player.y, e.x, e.y);
     this.physics.velocityFromRotation(away, FLINCH_SPEED, (e.body as Phaser.Physics.Arcade.Body).velocity);
     e.setData({ knock: FLINCH_SECONDS, wander: 0 });
+    this.think(e, THOUGHTS.flinch);
     this.tweens.add({ targets: e, scaleX: e.scaleX * 0.8, duration: 70, yoyo: true, ease: 'Sine.Out' });
     return true;
   }
@@ -907,10 +1088,11 @@ export class GameScene extends Phaser.Scene {
     const e = this.enemies.get() as Sprite | null;
     if (!e) return;
     e.enableBody(true, x, y, true, true);
+    this.forget(e);
     e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false).setAlpha(1);
     e.setData({
       mood, gen, baseSize: gen ? BROOD_SIZE : 1, hp: gen ? BROOD_HP : 3, speed: AGGRO_SPEED, knock: 0, wander: 0, absorb: 0, tint: 0xffffff,
-      phase: Math.random() * Math.PI * 2, near: false, irritated: false,
+      phase: Math.random() * Math.PI * 2, near: false, irritated: false, lost: 0, noticed: false, swore: false,
     });
     this.showMood(e, false);
     if (!gen) return sfx.seed();
@@ -992,6 +1174,7 @@ export class GameScene extends Phaser.Scene {
 
     const hp = e.getData('hp') - this.stats.damage;
     e.setData('hp', hp);
+    this.showDamage(e, this.stats.damage);
     if (b.getData('pellet')) this.blastImpact(b.getData('blast'));
     if (hp <= 0) {
       this.kills++;
@@ -1009,8 +1192,11 @@ export class GameScene extends Phaser.Scene {
       // Shooting the tutorial enemy aggravates it.
       if (this.tutorial && e.getData('mood') !== 'aggro') {
         this.notes.shotWhileCalm = true;
-        e.setData('mood', 'aggro');
+        e.setData({ mood: 'aggro', swore: true });
         this.showMood(e, true);
+        // A startled "!", then it finds its words.
+        this.think(e, THOUGHTS.shot, { critical: true, seconds: 0.7 });
+        this.time.delayedCall(700, () => e.active && this.think(e, THOUGHTS.angry, { critical: true, shake: true }));
       }
       e.setTintFill(0xffffff);
       this.time.delayedCall(60, () => this.restoreTint(e));
@@ -1073,6 +1259,7 @@ export class GameScene extends Phaser.Scene {
     if (was === 0) sfx.absorbing();
     const p = Math.min(1, was + this.game.loop.delta / 1000 / ABSORB_SECONDS);
     e.setData('absorb', p).setAlpha(1 - 0.7 * p);
+    this.absorbing = Math.max(this.absorbing, p);
     if (e.getData('mood') === 'aggro') this.setAnger(Math.max(this.anger, p));
     if (p < 1) return;
     e.disableBody(true, true);
@@ -1092,6 +1279,7 @@ export class GameScene extends Phaser.Scene {
   private gainTrait(t: Trait) {
     this.traits[t]++;
     this.lastTrait = t;
+    this.steep = Math.min(1, this.steep + STEEP_PER_POINT);
   }
 
   /** Calm fades the core toward a ghost. */
@@ -1113,21 +1301,79 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Wisps drift around the centre at different speeds, pulsing in size and brightness; a trail follows while moving. */
-  private drawPlasma() {
-    const size = this.player.scaleX / SPRITE_SCALE;
-    const t = this.time.now / 1000;
-    this.wisps.forEach((w, i) => {
-      const ph = w.getData('phase') as number;
-      const a = ph + t * (0.55 + 0.3 * i) * (i % 2 ? -1 : 1);
-      const r = (7 + 2.5 * Math.sin(t * 1.7 + ph * 2)) * size;
-      w.setPosition(this.player.x + Math.cos(a) * r, this.player.y + Math.sin(a) * r);
-      w.setScale(SPRITE_SCALE * size * (0.5 + 0.12 * Math.sin(t * 2.3 + ph)));
-      w.setAlpha(this.player.alpha * (0.45 + 0.2 * Math.sin(t * 3.1 + ph * 1.3)));
+  /** The core's colour and face follow what it has done and what is happening to it. */
+  private updateCore(dt: number) {
+    const p = this.player;
+    const total = this.traits.hard + this.traits.calm + this.traits.rage;
+    // The colour and the look deepen slowly over a run.
+    if (!this.tutorial && total > 0) this.steep = Math.min(1, this.steep + dt / STEEP_SECONDS);
+    const share = (t: Trait) => (total ? this.traits[t] / total : 0);
+    let colour = CORE_WHITE;
+    if (total) {
+      const mix = (shift: number) =>
+        Math.round((['hard', 'calm', 'rage'] as const).reduce((sum, t) => sum + share(t) * ((CORE_COLOURS[t] >> shift) & 0xff), 0)) << shift;
+      colour = lerpColor(CORE_WHITE, mix(16) | mix(8) | mix(0), this.steep * 0.92);
+    }
+    this.coreColour = colour;
+    p.setTint(colour);
+
+    // Who is crowding it, and what it is looking at: the nearest enemy, or else where it is going.
+    let crowd = 0;
+    let threat = 0;
+    let best = LOOK_RADIUS * LOOK_RADIUS;
+    let lx = 0;
+    let ly = 0;
+    for (const obj of this.enemies.getChildren()) {
+      const e = obj as Sprite;
+      if (!e.active) continue;
+      const d2 = Phaser.Math.Distance.Squared(e.x, e.y, p.x, p.y);
+      if (d2 < CROWD_RADIUS * CROWD_RADIUS) crowd++;
+      if (this.tutorial && e.getData('mood') === 'aggro' && d2 < 220 * 220) threat = 1;
+      if (d2 < best) {
+        best = d2;
+        lx = e.x - p.x;
+        ly = e.y - p.y;
+      }
+    }
+    const v = (p.body as Phaser.Physics.Arcade.Body).velocity;
+    const moving = v.length() > TRAIL_MIN_SPEED;
+    if (!lx && !ly && moving) {
+      lx = v.x;
+      ly = v.y;
+    }
+    const len = Math.hypot(lx, ly) || 1;
+    // It starts a little scared, and settles into itself as it becomes something.
+    const want = Phaser.Math.Clamp(
+      BASE_FEAR * (1 - 0.6 * this.steep) +
+        0.75 * (1 - this.hp / this.stats.maxHp) +
+        0.45 * Math.min(1, crowd / CROWD_FULL) +
+        0.3 * threat +
+        0.3 * this.anger +
+        (this.bumpLeft > 0 ? 0.4 : 0),
+      0,
+      1,
+    );
+    this.fear += (want - this.fear) * (1 - Math.exp(-dt * 2.5));
+    this.face.update(dt, {
+      x: p.x,
+      y: p.y,
+      size: p.scaleX / SPRITE_SCALE,
+      // A faded core (calm, or mid-phase) keeps its face a little clearer than its body.
+      alpha: Math.sqrt(p.alpha),
+      colour,
+      fear: this.fear,
+      gentle: share('calm') * this.steep,
+      dark: share('rage') * this.steep,
+      stern: share('hard') * this.steep,
+      lookX: lx / len,
+      lookY: ly / len,
+      shut: this.absorbing,
     });
-    const v = (this.player.body as Phaser.Physics.Arcade.Body).velocity;
-    this.trail.emitting = v.length() > TRAIL_MIN_SPEED;
-    this.trail.setAlpha(this.player.alpha);
+    this.absorbing = 0;
+
+    this.trail.emitting = moving;
+    this.trail.setAlpha(p.alpha * 0.8);
+    this.trail.setParticleTint(colour);
   }
 
   /** Hard: a dark steel edge around the core, thicker with each kill; bright while braced. */
@@ -1165,6 +1411,7 @@ export class GameScene extends Phaser.Scene {
     if (t === 'calm') {
       this.phaseLeft = PHASE_SECONDS;
       this.lastAbility = 'phase';
+      this.loseEnemies();
     } else if (t === 'hard') {
       this.braceLeft = BRACE_SECONDS;
       this.lastAbility = 'brace';
@@ -1206,7 +1453,7 @@ export class GameScene extends Phaser.Scene {
       const e = obj as Sprite;
       if (!e.active) continue;
       let cd = (e.getData('shootCd') as number) - dt;
-      if (cd <= 0 && this.phaseLeft <= 0 && view.contains(e.x, e.y)) {
+      if (cd <= 0 && (e.getData('lost') as number) <= 0 && view.contains(e.x, e.y)) {
         cd = Phaser.Math.FloatBetween(...ENEMY_SHOT_GAP);
         const b = this.enemyBullets.get() as Sprite | null;
         if (b) {
@@ -1239,6 +1486,7 @@ export class GameScene extends Phaser.Scene {
     const armor = 1 - HARD_ARMOR * this.trait('hard');
     this.hp -= CONTACT_DAMAGE * armor * (this.braceLeft > 0 ? BRACE_DAMAGE : 1);
     this.invuln = INVULN_SECONDS;
+    this.face.react('hit');
     this.cameras.main.shake(120, 0.006);
     if (this.hp <= 0) this.gameOver();
     else sfx.hurt();
@@ -1285,6 +1533,7 @@ export class GameScene extends Phaser.Scene {
     sfx.levelUp();
     this.ui.showLevelUp(rollUpgrades(3, this.stats), (upgrade) => {
       upgrade.apply(this.stats, { heal: (n) => (this.hp = Math.min(this.stats.maxHp, this.hp + n)) });
+      this.face.react('joy');
       this.pendingLevels--;
       if (this.pendingLevels > 0) {
         this.offerUpgrade();
