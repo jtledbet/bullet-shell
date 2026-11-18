@@ -16,6 +16,9 @@ interface Save {
   /** Name plates over the tutorial seeds. */
   labels: boolean;
   best: BestRun | null;
+  /** Developer extras on this device (turned on with `?dev` in the URL), and the auto shotgun among them. */
+  dev: boolean;
+  devShotgun: boolean;
 }
 
 function validBest(b: unknown): BestRun | null {
@@ -27,9 +30,15 @@ function validBest(b: unknown): BestRun | null {
 function read(): Save {
   try {
     const parsed = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Save> | null;
-    return { muted: parsed?.muted === true, labels: parsed?.labels === true, best: validBest(parsed?.best) };
+    return {
+      muted: parsed?.muted === true,
+      labels: parsed?.labels === true,
+      best: validBest(parsed?.best),
+      dev: parsed?.dev === true,
+      devShotgun: parsed?.devShotgun === true,
+    };
   } catch {
-    return { muted: false, labels: false, best: null };
+    return { muted: false, labels: false, best: null, dev: false, devShotgun: false };
   }
 }
 
@@ -54,6 +63,20 @@ export const labelsOn = () => save.labels;
 
 export function setLabels(on: boolean) {
   save.labels = on;
+  write();
+}
+
+export const devOn = () => save.dev;
+
+export function setDev(on: boolean) {
+  save.dev = on;
+  write();
+}
+
+export const devShotgunOn = () => save.dev && save.devShotgun;
+
+export function setDevShotgun(on: boolean) {
+  save.devShotgun = on;
   write();
 }
 

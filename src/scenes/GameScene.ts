@@ -4,7 +4,7 @@ import { Face } from '../face';
 import { sfx } from '../audio';
 import { pixelRatio, TEX_SCALE } from '../display';
 import { restHum, setDanger, setHum, setPauseMusic } from '../music';
-import { labelsOn, recordRun, setLabels } from '../storage';
+import { devShotgunOn, labelsOn, recordRun, setDev, setLabels } from '../storage';
 import { CORE_COLOURS, CORE_WHITE, POWER_NAMES, TRAIT_COLOURS, type Trait } from '../traits';
 import { baseStats, rollUpgrades, type Stats } from '../upgrades';
 
@@ -135,6 +135,18 @@ const TUTORIAL_DISTANCE = 260;
 const TUTORIAL_ONLY = new URLSearchParams(window.location.search).has('tutorial');
 // `?labels` in the URL turns the seeds' name plates on (and remembers it, like the pause-menu toggle).
 if (new URLSearchParams(window.location.search).has('labels')) setLabels(true);
+// `?dev` in the URL turns on developer extras on this device and remembers it; `?dev=off` turns them off again.
+{
+  const query = new URLSearchParams(window.location.search);
+  if (query.has('dev')) setDev(query.get('dev') !== 'off');
+}
+/**
+ * Developer extra, switched from the pause menu: an auto-loading shotgun from the first second.
+ * Blasts per second and pellets per blast, with a shorter hit-stop so rapid fire doesn't stutter.
+ */
+const AUTO_SHOTGUN_RATE = 3;
+const AUTO_SHOTGUN_PELLETS = 6;
+const AUTO_HIT_STOP_MS = 18;
 /** Sandbox: pause between the kill and the next tutorial (ms). */
 const TUTORIAL_REPEAT_MS = 1200;
 /** Skeptical seeds flee inside this radius, otherwise wander, drifting back past the leash. */
@@ -344,6 +356,7 @@ export class GameScene extends Phaser.Scene {
   /** Brood seeds scheduled to pop up but not out yet; the tutorial can't end while any are pending. */
   private pendingSeeds = 0;
   /** Tutorial: seconds standing idle, whether that has irritated the seeds, bumps taken, and the current bump. */
+  private autoShotgun = false;
   private idleTime = 0;
   private nudges = 0;
   private outcome: Outcome | null = null;
@@ -501,6 +514,9 @@ export class GameScene extends Phaser.Scene {
     this.ui = this.scene.get('ui') as UIScene;
     this.ui.onPauseRequested = () => this.pauseGame();
     this.ui.onAbilityRequested = () => this.useAbility();
+    this.ui.onDevShotgun = (on) => this.setAutoShotgun(on);
+    this.autoShotgun = false;
+    if (devShotgunOn()) this.setAutoShotgun(true);
   }
 
   private releaseKeys() {
@@ -517,6 +533,14 @@ export class GameScene extends Phaser.Scene {
     const focused = document.hasFocus();
     if (this.hadFocus && !focused) this.onFocusLost();
     this.hadFocus = focused;
+  }
+
+  /** Developer extra: hands over the auto shotgun, or takes it back (which also puts the shotgun back to none). */
+  private setAutoShotgun(on: boolean) {
+    this.autoShotgun = on;
+    const base = baseStats();
+    this.stats.shotgunPellets = on ? Math.max(this.stats.shotgunPellets, AUTO_SHOTGUN_PELLETS) : base.shotgunPellets;
+    this.stats.shotgunRate = on ? Math.max(this.stats.shotgunRate, AUTO_SHOTGUN_RATE) : base.shotgunRate;
   }
 
   /** The colour behind everything. It is the canvas's own clear colour, so it costs nothing to draw. */
@@ -1228,7 +1252,7 @@ export class GameScene extends Phaser.Scene {
     this.gridKick = BLAST_KICK_MS / 1000;
     this.followGrid();
     if (this.hitStop > 0) return;
-    this.hitStop = HIT_STOP_MS / 1000;
+    this.hitStop = (this.autoShotgun ? AUTO_HIT_STOP_MS : HIT_STOP_MS) / 1000;
     this.physics.pause();
   }
 
