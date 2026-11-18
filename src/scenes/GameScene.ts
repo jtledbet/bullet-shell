@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import type { UIScene } from './UIScene';
 import { sfx } from '../audio';
 import { pixelRatio, TEX_SCALE } from '../display';
-import { setPauseMusic } from '../music';
+import { setDanger, setHum, setPauseMusic } from '../music';
 import { recordRun } from '../storage';
 import { baseStats, rollUpgrades, type Stats } from '../upgrades';
 
@@ -44,9 +44,18 @@ const T = TEX_SCALE;
 const SHOTGUN_RANGE = 230;
 const SHOTGUN_SPREAD = 0.75;
 const SHOTGUN_SPEED = 620;
-/** Seconds an enemy hit by a pellet is pushed back instead of chasing. */
-const KNOCKBACK_SECONDS = 0.12;
-const KNOCKBACK_SPEED = 260;
+/** Seconds an enemy hit by a pellet is shoved away from you instead of chasing. */
+const KNOCKBACK_SECONDS = 0.22;
+/** Shove speed at point blank and at the edge of the shotgun's reach; pellets landing together add up, to a cap. */
+const KNOCKBACK_NEAR = 560;
+const KNOCKBACK_FAR = 200;
+const KNOCKBACK_MAX = 900;
+/** Each pellet passes through this many enemies before stopping (on top of any pierce upgrades). */
+const SHOTGUN_PIERCE = 1;
+/** A blast that connects: the camera kicks and the world holds still for a moment. */
+const BLAST_SHAKE_MS = 90;
+const BLAST_SHAKE = 0.005;
+const HIT_STOP_MS = 50;
 /** Tutorial: how far from the player its one enemy appears. */
 const TUTORIAL_DISTANCE = 260;
 /** `?tutorial` in the URL: a tutorial-only sandbox. Each kill starts a fresh tutorial instead of the game. */
@@ -166,6 +175,11 @@ export class GameScene extends Phaser.Scene {
   private elapsed = 0;
   private fireCooldown = 0;
   private shotgunCooldown = 0;
+  /** Counts shotgun blasts, so only the first pellet of each to connect triggers the shake and hit-stop. */
+  private blastId = 0;
+  private impactBlast = -1;
+  /** Seconds left in a hit-stop: the world holds still. */
+  private hitStop = 0;
   private spawnTimer = 0;
   private invuln = 0;
   private pendingLevels = 0;
@@ -209,6 +223,8 @@ export class GameScene extends Phaser.Scene {
     this.stats = baseStats();
     this.hp = this.stats.maxHp;
     this.xp = this.kills = this.elapsed = this.fireCooldown = this.shotgunCooldown = this.invuln = this.pendingLevels = 0;
+    this.blastId = this.hitStop = 0;
+    this.impactBlast = -1;
     this.level = 1;
     this.spawnTimer = 1;
     this.frozen = this.paused = false;
@@ -222,6 +238,7 @@ export class GameScene extends Phaser.Scene {
     this.abilityCooldown = this.phaseLeft = this.braceLeft = 0;
     this.moodLabels = [];
     setPauseMusic(false);
+    setHum(true);
     this.physics.resume();
     this.time.paused = false;
 
@@ -327,6 +344,12 @@ export class GameScene extends Phaser.Scene {
   update(_time: number, delta: number) {
     this.pollFocus();
     if (this.frozen) return;
+    setDanger(1 - this.hp / this.stats.maxHp);
+    if (this.hitStop > 0) {
+      this.hitStop -= delta / 1000;
+      if (this.hitStop > 0) return;
+      this.physics.resume();
+    }
     // The "turn your phone sideways" overlay covers the game; don't play on underneath it.
     if (this.rotatePrompt.matches) return this.pauseGame();
     const dt = delta / 1000;
@@ -509,6 +532,7 @@ export class GameScene extends Phaser.Scene {
     const dir = this.aimDirection(SHOTGUN_RANGE);
     if (!dir) return;
     this.shotgunCooldown = 1 / this.stats.shotgunRate;
+    this.blastId++;
 
     sfx.shotgun();
     const base = dir.angle();
@@ -532,7 +556,7 @@ export class GameScene extends Phaser.Scene {
     // Reuse the pooled bullet's hit set rather than allocating one per shot.
     const hits = (b.getData('hits') as Set<Sprite> | undefined) ?? new Set<Sprite>();
     hits.clear();
-    b.setData({ pierce: this.stats.pierce, life, hits, pellet });
+    b.setData({ pierce: this.stats.pierce + (pellet ? SHOTGUN_PIERCE : 0), life, hits, pellet, blast: this.blastId });
     return true;
   }
 
@@ -716,6 +740,7 @@ export class GameScene extends Phaser.Scene {
 
     const hp = e.getData('hp') - this.stats.damage;
     e.setData('hp', hp);
+    if (b.getData('pellet')) this.blastImpact(b.getData('blast'));
     if (hp <= 0) {
       this.kills++;
       sfx.kill();
@@ -736,16 +761,35 @@ export class GameScene extends Phaser.Scene {
       }
       e.setTintFill(0xffffff);
       this.time.delayedCall(60, () => this.restoreTint(e));
-      if (b.getData('pellet')) {
-        const body = b.body as Phaser.Physics.Arcade.Body;
-        this.physics.velocityFromRotation(body.velocity.angle(), KNOCKBACK_SPEED, (e.body as Phaser.Physics.Arcade.Body).velocity);
-        e.setData('knock', KNOCKBACK_SECONDS);
-      }
+      if (b.getData('pellet')) this.shove(e);
     }
 
     const pierce = b.getData('pierce');
     if (pierce <= 0) b.disableBody(true, true);
     else b.setData('pierce', pierce - 1);
+  }
+
+  /** Pushes an enemy straight away from you, harder the closer it is. Pellets from one blast stack, up to a cap. */
+  private shove(e: Sprite) {
+    const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, e.x, e.y);
+    const speed = Phaser.Math.Linear(KNOCKBACK_NEAR, KNOCKBACK_FAR, Phaser.Math.Clamp(d / SHOTGUN_RANGE, 0, 1));
+    const away = Phaser.Math.Angle.Between(this.player.x, this.player.y, e.x, e.y);
+    const v = (e.body as Phaser.Physics.Arcade.Body).velocity;
+    const push = new Phaser.Math.Vector2().setToPolar(away, speed);
+    // A fresh shove replaces the chase; a second pellet in the same shove adds to it.
+    if ((e.getData('knock') as number) > 0) v.add(push).limit(KNOCKBACK_MAX);
+    else v.copy(push);
+    e.setData('knock', KNOCKBACK_SECONDS);
+  }
+
+  /** The first pellet of a blast to connect: a camera kick and a brief hit-stop. */
+  private blastImpact(blast: number) {
+    if (blast === this.impactBlast) return;
+    this.impactBlast = blast;
+    this.cameras.main.shake(BLAST_SHAKE_MS, BLAST_SHAKE);
+    if (this.hitStop > 0) return;
+    this.hitStop = HIT_STOP_MS / 1000;
+    this.physics.pause();
   }
 
   /** In the tutorial a sprite inside you is slowly absorbed; afterwards, contact hurts. */
@@ -927,6 +971,7 @@ export class GameScene extends Phaser.Scene {
 
   private gameOver() {
     this.frozen = true;
+    setHum(false);
     this.physics.pause();
     this.hp = 0;
     this.ui.updateHud(this.hudState());

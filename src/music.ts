@@ -151,12 +151,113 @@ let pauses = 0;
 let current: Track = TRACKS[0];
 let playing: { gain: GainNode; voices: Voices; timer: number; next: number; step: number } | undefined;
 
-/** Starts or stops whichever loop should be playing now. */
+/** Starts or stops whichever loop should be playing now, and the in-game hum. */
 export function refreshMusic() {
   const out = audioOut();
-  const should = wanted && !isMuted() && document.visibilityState === 'visible' && out !== null;
+  const audible = !isMuted() && document.visibilityState === 'visible' && out !== null;
+  const should = wanted && audible;
   if (should && !playing) start(out!.ctx, out!.master);
   else if (!should && playing) stop();
+  // The hum gives way to the pause music.
+  const shouldHum = humWanted && !wanted && audible;
+  if (shouldHum && !hum) startHum(out!.ctx, out!.master);
+  else if (!shouldHum && hum) stopHum();
+}
+
+/**
+ * In-game hum: a low, slightly detuned drone that swells as you lose health. Quiet at full
+ * health; lower health opens the filter, adds a dissonant note a semitone up, and quickens
+ * a slow throb toward a heartbeat.
+ */
+const HUM_ROOT = 55;
+const HUM_QUIET = 0.05;
+const HUM_LOUD = 0.26;
+const HUM_FADE = 0.6;
+/** Seconds for the hum to settle on a new danger level. */
+const HUM_GLIDE = 0.35;
+
+let humWanted = false;
+let danger = 0;
+let hum: { out: GainNode; filter: BiquadFilterNode; rumble: GainNode; dissonance: GainNode; lfo: OscillatorNode; depth: GainNode; oscs: OscillatorNode[] } | undefined;
+
+/** Called with true when a game starts and false when it ends. */
+export function setHum(on: boolean) {
+  humWanted = on;
+  if (on) danger = 0;
+  refreshMusic();
+}
+
+/** 0 at full health, 1 at none. Cheap to call every frame. */
+export function setDanger(d: number) {
+  d = Math.min(1, Math.max(0, d));
+  if (Math.abs(d - danger) < 0.005) return;
+  danger = d;
+  if (hum) shapeHum();
+}
+
+function shapeHum() {
+  const h = hum!;
+  const now = h.out.context.currentTime;
+  const d = danger;
+  h.out.gain.setTargetAtTime(HUM_QUIET + (HUM_LOUD - HUM_QUIET) * d ** 1.5, now, HUM_GLIDE);
+  h.filter.frequency.setTargetAtTime(120 + 900 * d * d, now, HUM_GLIDE);
+  h.dissonance.gain.setTargetAtTime(0.7 * d * d, now, HUM_GLIDE);
+  h.lfo.frequency.setTargetAtTime(0.18 + 1.9 * d, now, HUM_GLIDE);
+  // The throb dips the drone by up to this much.
+  const depth = 0.15 + 0.4 * d;
+  h.rumble.gain.setTargetAtTime(1 - depth, now, HUM_GLIDE);
+  h.depth.gain.setTargetAtTime(depth, now, HUM_GLIDE);
+}
+
+function startHum(c: AudioContext, master: GainNode) {
+  const out = c.createGain();
+  out.gain.value = 0;
+  out.connect(master);
+  const filter = c.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.Q.value = 3;
+  filter.connect(out);
+  const rumble = c.createGain();
+  rumble.connect(filter);
+  const dissonance = c.createGain();
+  dissonance.gain.value = 0;
+  dissonance.connect(rumble);
+  const osc = (type: OscillatorType, hz: number, to: AudioNode) => {
+    const o = c.createOscillator();
+    o.type = type;
+    o.frequency.value = hz;
+    o.connect(to);
+    o.start();
+    return o;
+  };
+  // A slow sine wobbling the drone's level: the throb.
+  const depth = c.createGain();
+  depth.connect(rumble.gain);
+  const lfo = osc('sine', 0.2, depth);
+  const oscs = [
+    osc('sawtooth', HUM_ROOT, rumble),
+    osc('sawtooth', HUM_ROOT * 1.006, rumble),
+    osc('sine', HUM_ROOT / 2, rumble),
+    osc('sawtooth', HUM_ROOT * 2 ** (1 / 12), dissonance),
+    lfo,
+  ];
+  hum = { out, filter, rumble, dissonance, lfo, depth, oscs };
+  shapeHum();
+  // Fade in rather than jump to the level shapeHum set.
+  out.gain.cancelScheduledValues(c.currentTime);
+  out.gain.setValueAtTime(0, c.currentTime);
+  out.gain.linearRampToValueAtTime(HUM_QUIET + (HUM_LOUD - HUM_QUIET) * danger ** 1.5, c.currentTime + HUM_FADE);
+}
+
+function stopHum() {
+  const h = hum!;
+  hum = undefined;
+  const now = h.out.context.currentTime;
+  h.out.gain.cancelScheduledValues(now);
+  h.out.gain.setValueAtTime(h.out.gain.value, now);
+  h.out.gain.linearRampToValueAtTime(0, now + FADE_OUT);
+  for (const o of h.oscs) o.stop(now + FADE_OUT + 0.05);
+  window.setTimeout(() => h.out.disconnect(), (FADE_OUT + 0.1) * 1000);
 }
 
 /** Called with true when the game pauses and false when it resumes or restarts. */
@@ -199,7 +300,14 @@ function stop() {
 }
 
 /** For test scripts: what is playing and how many notes it has scheduled. */
-export const musicState = () => ({ playing: !!playing, track: playing ? current.name : null, notes: playing?.voices.notes ?? 0 });
+export const musicState = () => ({
+  playing: !!playing,
+  track: playing ? current.name : null,
+  notes: playing?.voices.notes ?? 0,
+  hum: !!hum,
+  danger,
+  humLevel: hum ? hum.out.gain.value : 0,
+});
 
 onUnlock(refreshMusic);
 document.addEventListener('visibilitychange', refreshMusic);

@@ -124,8 +124,11 @@ export const sfx = {
   shotgun() {
     const t = begin('shotgun', 0.1);
     if (t === null) return;
-    noise(t, 0.18, 0.28, 2400);
+    // Crack, body, and a low boom that rolls on after.
+    noise(t, 0.05, 0.3, 6000);
+    noise(t, 0.22, 0.3, 1600);
     tone(t, 'sine', vary(150), 45, 0.16, 0.25);
+    tone(t, 'sine', vary(80, 0.04), 28, 0.42, 0.32);
   },
   levelUp() {
     const t = begin('levelUp', 0.3);
