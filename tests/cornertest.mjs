@@ -1,0 +1,21 @@
+import { open } from './cdp.mjs';
+const t = await open({ out: process.argv[2], port: 9345, url: 'http://127.0.0.1:5173/?fullres', dsf: 1 });
+const { evaluate, shot, mouse, click, check, sleep, G, U, uiPoint } = t;
+const alphas = () => evaluate(`({ pause: +${U}.pauseBtn.alpha.toFixed(2), fs: ${U}.fsBtn ? +${U}.fsBtn.alpha.toFixed(2) : null })`);
+// Wait out the first show.
+for (let i = 0; i < 30 && (await alphas()).pause > 0.25; i++) await sleep(300);
+let a = await alphas();
+check('corner buttons fade back after a moment', a.pause === 0.2, a);
+await shot('corner-faded.png');
+const pb = await uiPoint(`u.pauseBtn`);
+await mouse('mouseMoved', pb.x - 60, pb.y + 30, 'none'); await sleep(150);
+a = await alphas();
+check('a mouse coming near brings them back', a.pause === 1, a);
+for (let i = 0; i < 30 && (await alphas()).pause > 0.25; i++) await sleep(300);
+await click(pb.x, pb.y); await sleep(600);
+check('the pause button still works while faded', await evaluate(`${G}.paused`));
+await click(pb.x, pb.y); await sleep(500);
+a = await alphas();
+check('resuming shows them again', !(await evaluate(`${G}.paused`)) && a.pause === 1, a);
+check('fleet of foot', await evaluate(`import('/src/upgrades.ts').then(m => m.rollUpgrades(50, m.baseStats()).some(u => u.name === 'Fleet of Foot') || m.rollUpgrades(50, m.baseStats()).some(u => u.name === 'Fleet of Foot'))`));
+t.done();

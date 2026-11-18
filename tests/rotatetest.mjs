@@ -1,0 +1,11 @@
+import { open } from './cdp.mjs';
+const t = await open({ out: process.argv[2], port: 9346, url: 'http://127.0.0.1:5173/?fullres', width: 390, height: 844, dsf: 2, mobile: true, touch: true });
+const { evaluate, shot, check, sleep, G } = t;
+const r = await evaluate(`(() => { const el = document.getElementById('rotate'); const cs = getComputedStyle(el); const a = el.querySelector('a'); const b = document.getElementById('rotate-full');
+  return { shown: cs.display, text: [...el.querySelectorAll('p')].map(p => p.textContent), back: a?.getAttribute('href'), full: !!b, fullSize: b ? b.getBoundingClientRect().width : 0 }; })()`);
+check('portrait phone: the sideways screen shows, with its explanation', r.shown === 'flex' && r.text.length === 2, r);
+check('it has a back link to the games page', r.back === 'https://ledsec.dev/games/', r.back);
+check('and a fullscreen button, thumb sized', r.full && r.fullSize >= 44, r);
+check('the game holds still underneath', await evaluate(`${G}.paused`));
+await shot('rotate.png');
+t.done();

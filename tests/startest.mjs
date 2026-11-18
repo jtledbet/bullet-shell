@@ -1,0 +1,20 @@
+import { open } from './cdp.mjs';
+const t = await open({ out: process.argv[2], port: 9356, url: 'http://127.0.0.1:5173/?fullres', width: 1280, height: 720, dsf: 1 });
+const { evaluate, shot, check, sleep, G } = t;
+await evaluate(`(() => { const s = ${G}; s.enemies.getChildren().forEach(e => e.disableBody(true, true)); s.spawnSeed('curious', s.player.x + 200, s.player.y - 40, 0); return true; })()`);
+await sleep(600);
+await shot('orientation-grid.png');
+await evaluate(`(() => { const s = ${G}; s.endTutorial('absorbed'); s.spawnTimer = 1e9; s.fireCooldown = 1e9; s.stats.maxHp = s.hp = 1000; for (let i = 0; i < 6; i++) { s.spawnEnemy(); const e = s.enemies.getChildren().filter(o => o.active).pop(); e.setPosition(s.player.x + Math.cos(i) * 260, s.player.y + Math.sin(i) * 170); e.setData('speed', 0); } return true; })()`);
+await sleep(600);
+const mid = await evaluate(`({ a: +${G}.starAlpha.toFixed(2), grid: +${G}.grid.alpha.toFixed(2) })`);
+check('the swap is a fade, not a cut', mid.a > 0.1 && mid.a < 0.9 && mid.grid > 0.1 && mid.grid < 0.9, mid);
+await sleep(1200);
+// Stars slide by a fraction of your movement: the far layer least, the near layer most.
+const spots = () => evaluate(`(() => { const s = ${G}; const v = s.cameras.main.worldView; const wrap = n => ((n % 1600) + 1600) % 1600; return [0, 2].map(i => { const p = s.starSpots[i][0]; const d = [0.04, 0.1, 0.2][i]; return wrap(p.x - v.centerX * d); }); })()`);
+const a = await spots();
+await evaluate(`(() => { const s = ${G}; s.player.x += 300; s.cameras.main.centerOn(s.player.x, s.player.y); return true; })()`); await sleep(400);
+const b = await spots();
+const moved = a.map((x, i) => Math.min(Math.abs(x - b[i]), 1600 - Math.abs(x - b[i])));
+check('moving 300: far stars slide about 12, near stars about 60', Math.abs(moved[0] - 12) < 3 && Math.abs(moved[1] - 60) < 8, moved);
+await shot('run-stars.png');
+t.done();
