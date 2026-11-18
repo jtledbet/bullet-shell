@@ -36,6 +36,14 @@ export class BootScene extends Phaser.Scene {
       [1, 'rgba(255,255,255,0)'],
     ]);
 
+    // A mote of energy an enemy sometimes leaves behind: the same stuff as the core.
+    this.glow('mote', 12, [
+      [0, 'rgba(255,255,255,1)'],
+      [0.3, 'rgba(226,240,255,0.95)'],
+      [0.6, 'rgba(150,200,255,0.4)'],
+      [1, 'rgba(120,180,255,0)'],
+    ]);
+
     this.ember();
     // A spark that drifts off the embers.
     this.glow('fleck', 4, [

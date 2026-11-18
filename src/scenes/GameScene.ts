@@ -181,6 +181,7 @@ const CURIOUS_DRIFT = 8;
 const CURIOUS_NEAR = 160;
 const FLINCH_SPEED = 260;
 const FLINCH_SECONDS = 0.15;
+const FLINCH_SLACK = 50;
 const TREMBLE_DEG = 4;
 /**
  * Orientation, before the player has ever done anything: gentle nudges at these idle seconds.
@@ -243,7 +244,20 @@ const TRAIT_CAP = 4;
 const PHASE_SECONDS = 1.2;
 const BRACE_SECONDS = 1.5;
 const BRACE_DAMAGE = 0.2;
-const BURST_SHOTS = 12;
+/** Rage's power: a shockwave this wide that hits everything in it for this many times your shot damage. */
+const BURST_RADIUS = 170;
+const BURST_DAMAGE = 4;
+/**
+ * Energy. The core fires pieces of itself, so every volley and every blast spends a little
+ * health. Firing alone can weaken you down to ENERGY_FLOOR of your health but no further. The
+ * core shrinks a little as it empties. Kills sometimes leave a mote of energy that gives some back.
+ */
+const SHOT_ENERGY = 0.06;
+const BLAST_ENERGY = 0.12;
+const ENERGY_FLOOR = 0.15;
+const ENERGY_MIN_SIZE = 0.8;
+const MOTE_CHANCE = 0.07;
+const MOTE_HEAL = 6;
 const ABILITY_COOLDOWN = 6;
 
 /** What the tutorial noticed about how it was played. */
@@ -302,6 +316,7 @@ export class GameScene extends Phaser.Scene {
   private enemies!: Phaser.Physics.Arcade.Group;
   private bullets!: Phaser.Physics.Arcade.Group;
   private gems!: Phaser.Physics.Arcade.Group;
+  private motes!: Phaser.Physics.Arcade.Group;
   private grid!: Phaser.GameObjects.Graphics;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private readonly aimVec = new Phaser.Math.Vector2();
@@ -471,12 +486,14 @@ export class GameScene extends Phaser.Scene {
     this.bullets = this.physics.add.group({ defaultKey: 'bolt', maxSize: 300 });
     this.enemyBullets = this.physics.add.group({ defaultKey: 'ember-shot', maxSize: 300 });
     this.gems = this.physics.add.group({ defaultKey: 'gem', maxSize: 600 });
+    this.motes = this.physics.add.group({ defaultKey: 'mote', maxSize: 120 });
 
     this.physics.add.collider(this.enemies, this.enemies);
     this.physics.add.overlap(this.bullets, this.enemies, (b, e) => this.onBulletHit(b as Sprite, e as Sprite));
     this.physics.add.overlap(this.player, this.enemies, (_p, e) => this.onPlayerTouch(e as Sprite));
     this.physics.add.overlap(this.player, this.enemyBullets, (_p, b) => this.onEnemyBullet(b as Sprite));
     this.physics.add.overlap(this.player, this.gems, (_p, g) => this.onGem(g as Sprite));
+    this.physics.add.overlap(this.player, this.motes, (_p, m) => this.onMote(m as Sprite));
 
     const cam = this.cameras.main;
     cam.setBackgroundColor('rgba(0,0,0,0)');
@@ -889,6 +906,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     sfx.shoot();
+    this.spend(SHOT_ENERGY);
     const n = this.stats.multishot;
     const base = dir.angle();
     for (let i = 0; i < n; i++) {
@@ -909,6 +927,7 @@ export class GameScene extends Phaser.Scene {
     this.blastId++;
 
     sfx.shotgun();
+    this.spend(BLAST_ENERGY);
     const base = dir.angle();
     this.blastAngle = base;
     for (let i = 0; i < n; i++) {
@@ -1043,8 +1062,10 @@ export class GameScene extends Phaser.Scene {
 
   /** The moment you come near, a skeptical seed jerks away and squashes. Returns true on that frame. */
   private flinch(e: Sprite) {
-    const near = Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y) < SKEPTICAL_FLEE_RADIUS;
+    const d = Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y);
     const was = e.getData('near') as boolean;
+    // It has to back well off before it can be startled again, or it would twitch at the edge.
+    const near = d < SKEPTICAL_FLEE_RADIUS + (was ? FLINCH_SLACK : 0);
     e.setData('near', near);
     if (!near || was) return false;
     const away = Phaser.Math.Angle.Between(this.player.x, this.player.y, e.x, e.y);
@@ -1196,10 +1217,22 @@ export class GameScene extends Phaser.Scene {
     if (hits.has(e)) return;
     hits.add(e);
 
-    const hp = e.getData('hp') - this.stats.damage;
-    e.setData('hp', hp);
-    this.showDamage(e, this.stats.damage);
     if (b.getData('pellet')) this.blastImpact(b.getData('blast'));
+    if (!this.strike(e, this.stats.damage) && b.getData('pellet')) this.shove(e);
+
+    const pierce = b.getData('pierce');
+    if (pierce <= 0) b.disableBody(true, true);
+    else b.setData('pierce', pierce - 1);
+  }
+
+  /**
+   * Hurts an enemy by `amount`, with everything that follows from that: the number floating up,
+   * the kill and what it leaves behind, or the flash of a hit. Returns whether it died.
+   */
+  private strike(e: Sprite, amount: number) {
+    const hp = e.getData('hp') - amount;
+    e.setData('hp', hp);
+    this.showDamage(e, amount);
     if (hp <= 0) {
       this.kills++;
       sfx.kill();
@@ -1210,26 +1243,91 @@ export class GameScene extends Phaser.Scene {
         this.notes.killed++;
         this.gainTrait('hard');
         this.checkTutorialDone();
+      } else {
+        if (this.stats.leech) this.heal(this.stats.leech);
+        if (Math.random() < MOTE_CHANCE) this.dropMote(e.x + 8, e.y - 6);
       }
-    } else {
-      sfx.hit();
-      // Shooting the tutorial enemy aggravates it.
-      if (this.tutorial && e.getData('mood') !== 'aggro') {
-        this.notes.shotWhileCalm = true;
-        e.setData({ mood: 'aggro', swore: true });
-        this.showMood(e, true);
-        // A startled "!", then it finds its words.
-        this.think(e, THOUGHTS.shot, { critical: true, seconds: 0.7 });
-        this.time.delayedCall(700, () => e.active && this.think(e, THOUGHTS.angry, { critical: true, shake: true }));
-      }
-      e.setTintFill(0xffffff);
-      this.time.delayedCall(60, () => this.restoreTint(e));
-      if (b.getData('pellet')) this.shove(e);
+      return true;
     }
+    sfx.hit();
+    // Shooting a seed in orientation aggravates it.
+    if (this.tutorial && e.getData('mood') !== 'aggro') {
+      this.notes.shotWhileCalm = true;
+      e.setData({ mood: 'aggro', swore: true });
+      this.showMood(e, true);
+      // A startled "!", then it finds its words.
+      this.think(e, THOUGHTS.shot, { critical: true, seconds: 0.7 });
+      this.time.delayedCall(700, () => e.active && this.think(e, THOUGHTS.angry, { critical: true, shake: true }));
+    }
+    e.setTintFill(0xffffff);
+    this.time.delayedCall(60, () => this.restoreTint(e));
+    return false;
+  }
 
-    const pierce = b.getData('pierce');
-    if (pierce <= 0) b.disableBody(true, true);
-    else b.setData('pierce', pierce - 1);
+  /** Firing spends a little of the core's own energy. It can leave you weak, but it never kills. Orientation is free. */
+  private spend(amount: number) {
+    if (this.tutorial) return;
+    this.hp = Math.min(this.hp, Math.max(this.stats.maxHp * ENERGY_FLOOR, this.hp - amount));
+  }
+
+  private heal(amount: number) {
+    this.hp = Math.min(this.stats.maxHp, this.hp + amount);
+  }
+
+  private dropMote(x: number, y: number) {
+    const m = this.motes.get() as Sprite | null;
+    if (!m) return;
+    m.enableBody(true, x, y, true, true);
+    m.setScale(SPRITE_SCALE).setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
+  }
+
+  private onMote(m: Sprite) {
+    if (!m.active) return;
+    m.disableBody(true, true);
+    this.heal(MOTE_HEAL);
+    sfx.heal();
+    this.face.react('joy');
+  }
+
+  /**
+   * Rage's power: everything close is thrown off you. A shockwave that hits every enemy in
+   * reach hard and hurls it back (harder the closer it was), and snuffs out their shots.
+   */
+  private burst() {
+    const p = this.player;
+    for (const obj of this.enemies.getChildren()) {
+      const e = obj as Sprite;
+      if (!e.active) continue;
+      const d = Phaser.Math.Distance.Between(p.x, p.y, e.x, e.y);
+      if (d > BURST_RADIUS) continue;
+      if (this.strike(e, this.stats.damage * BURST_DAMAGE)) continue;
+      const away = Phaser.Math.Angle.Between(p.x, p.y, e.x, e.y);
+      this.physics.velocityFromRotation(away, Phaser.Math.Linear(KNOCKBACK_MAX, KNOCKBACK_NEAR, d / BURST_RADIUS), (e.body as Phaser.Physics.Arcade.Body).velocity);
+      e.setData('knock', KNOCKBACK_SECONDS * 1.6);
+    }
+    for (const obj of this.enemyBullets.getChildren()) {
+      const b = obj as Sprite;
+      if (b.active && Phaser.Math.Distance.Between(p.x, p.y, b.x, b.y) <= BURST_RADIUS) b.disableBody(true, true);
+    }
+    // The background jolts, as with a shotgun blast.
+    this.gridKick = BLAST_KICK_MS / 1000;
+    const colour = TRAIT_COLOURS.rage;
+    this.tweens.addCounter({
+      from: 0,
+      to: 1,
+      duration: 340,
+      ease: 'Cubic.Out',
+      onUpdate: (tw) => {
+        const k = tw.getValue() ?? 1;
+        this.powerFx
+          .clear()
+          .fillStyle(colour, 0.3 * (1 - k))
+          .fillCircle(p.x, p.y, BURST_RADIUS * k)
+          .lineStyle(5 * (1 - k) + 1, colour, 0.95 * (1 - k))
+          .strokeCircle(p.x, p.y, BURST_RADIUS * k);
+      },
+      onComplete: () => this.powerFx.clear(),
+    });
   }
 
   /** Pushes an enemy straight away from you, harder the closer it is. Pellets from one blast stack, up to a cap. */
@@ -1328,6 +1426,7 @@ export class GameScene extends Phaser.Scene {
   /** The core's colour and face follow what it has done and what is happening to it. */
   private updateCore(dt: number) {
     const p = this.player;
+    this.sizeCore();
     const total = this.traits.hard + this.traits.calm + this.traits.rage;
     // The colour and the look deepen slowly over a run.
     if (!this.tutorial && total > 0) this.steep = Math.min(1, this.steep + dt / STEEP_SECONDS);
@@ -1430,7 +1529,7 @@ export class GameScene extends Phaser.Scene {
     if (!t) return;
     this.abilityCooldown = ABILITY_COOLDOWN;
     sfx.power(POWER_NAMES[t] as 'brace' | 'phase' | 'burst');
-    this.powerRing(TRAIT_COLOURS[t]);
+    if (t !== 'rage') this.powerRing(TRAIT_COLOURS[t]);
     if (labelsOn()) this.ui.floatWord(POWER_NAMES[t]);
     if (t === 'calm') {
       this.phaseLeft = PHASE_SECONDS;
@@ -1440,9 +1539,7 @@ export class GameScene extends Phaser.Scene {
       this.braceLeft = BRACE_SECONDS;
       this.lastAbility = 'brace';
     } else {
-      for (let i = 0; i < BURST_SHOTS; i++) {
-        this.shoot((i / BURST_SHOTS) * Math.PI * 2, this.stats.bulletSpeed, this.stats.range / this.stats.bulletSpeed + 0.15, false);
-      }
+      this.burst();
       this.lastAbility = 'burst';
     }
   }
@@ -1464,7 +1561,13 @@ export class GameScene extends Phaser.Scene {
 
   private setAnger(a: number) {
     this.anger = a;
-    const scale = SPRITE_SCALE * (1 + ANGER_SWELL * a);
+    this.sizeCore();
+  }
+
+  /** The core swells with the anger it is taking in, and shrinks a little as its energy runs down. */
+  private sizeCore() {
+    const energy = Phaser.Math.Clamp(this.hp / this.stats.maxHp, 0, 1);
+    const scale = SPRITE_SCALE * (1 + ANGER_SWELL * this.anger) * (ENERGY_MIN_SIZE + (1 - ENERGY_MIN_SIZE) * energy);
     this.player.setScale(scale);
     this.angerOverlay.setScale(scale);
   }
@@ -1523,9 +1626,10 @@ export class GameScene extends Phaser.Scene {
     g.setScale(SPRITE_SCALE).setDepth(3);
   }
 
+  /** Gems and motes of energy within reach fly to you. */
   private pullGems() {
     const reach = this.stats.magnet * this.stats.magnet;
-    for (const obj of this.gems.getChildren()) {
+    for (const obj of [...this.gems.getChildren(), ...this.motes.getChildren()]) {
       const g = obj as Sprite;
       if (!g.active) continue;
       if (Phaser.Math.Distance.Squared(g.x, g.y, this.player.x, this.player.y) < reach) {

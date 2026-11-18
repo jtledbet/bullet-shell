@@ -199,6 +199,13 @@ export const sfx = {
       for (const [hz, vol] of [[110, 0.07], [165, 0.05], [220, 0.04], [330, 0.025]]) tone(t, 'triangle', hz, hz, 2.6, vol, 0.9);
     }
   },
+  /** Energy coming back: two soft rising notes. */
+  heal() {
+    const t = begin('heal', 0.12);
+    if (t === null) return;
+    tone(t, 'sine', 660, 700, 0.22, 0.06, 0.02);
+    tone(t + 0.07, 'sine', 990, 1040, 0.3, 0.045, 0.02);
+  },
   /** Using your power. Brace: a heavy clank. Phase: a breath of air. Burst: a snarl under the shots. */
   power(kind: 'brace' | 'phase' | 'burst') {
     const t = begin('power', 0.2);

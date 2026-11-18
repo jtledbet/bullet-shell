@@ -12,6 +12,8 @@ export interface Stats {
   shotgunPellets: number;
   /** Shotgun blasts per second. */
   shotgunRate: number;
+  /** Health restored by each kill. */
+  leech: number;
 }
 
 export const baseStats = (): Stats => ({
@@ -26,6 +28,7 @@ export const baseStats = (): Stats => ({
   maxHp: 100,
   shotgunPellets: 0,
   shotgunRate: 0.9,
+  leech: 0,
 });
 
 export interface UpgradeContext {
@@ -64,6 +67,7 @@ export const UPGRADES: Upgrade[] = [
     },
   },
   { name: 'Field Medic', desc: 'Heal 40 HP', apply: (_s, ctx) => ctx.heal(40) },
+  { name: 'Siphon', desc: 'Each kill restores 1 HP', apply: (s) => (s.leech += 1) },
   {
     name: 'Shotgun',
     desc: 'New weapon: a close-range blast of 5 pellets that knocks enemies back',
