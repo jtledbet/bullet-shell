@@ -60,10 +60,26 @@ const IDLE_HEY_SECONDS = 18;
 const CURIOUS_CLOSER = 150;
 const ANGRY_CLOSE = 200;
 /**
- * Phasing: enemies this close are baffled (they stop, puzzled); farther ones wander off.
- * Both find you again a little after you come back.
+ * Phasing charms the enemies this close: for a few seconds they stop attacking and drift along
+ * beside you, ringed in soft blue. Touch one for a moment and you take it in, which gives back
+ * a little energy and a point of experience. Shoot one and the charm breaks. Farther enemies
+ * just lose you and wander off for a while.
  */
-const BAFFLE_RADIUS = 280;
+const CHARM_RADIUS = 280;
+const CHARM_SECONDS = 4;
+const CHARM_KEEP = 80;
+const CHARM_TAKE_SECONDS = 0.5;
+const CHARM_HEAL = 3;
+const CHARM_RECOIL = 150;
+/**
+ * Charm is catching. A charmed enemy that bumps into another passes it on, for whatever time it
+ * has left: each can pass it to this many others, down this many steps from the ones you charmed
+ * yourself. The ones that catch it don't come to you; they peel away from the horde.
+ */
+const CHARM_SPREADS = 2;
+const CHARM_STEPS = 3;
+const CHARM_MIN_LEFT = 0.8;
+const CHARM_RECOIL_SECONDS = 0.5;
 /** Damage numbers: how many at once, how far they rise, how long they last. Damage shows times ten (a base hit reads "10"). */
 const DAMAGE_POOL = 24;
 const DAMAGE_RISE = 26;
@@ -287,6 +303,8 @@ export interface HudState {
   gemArrow: { px: number; py: number; angle: number } | null;
   /** The HUD stays hidden during the tutorial. */
   tutorial: boolean;
+  /** Which way orientation went. The count reads "kills" in bullet hell and "souls" otherwise. */
+  hell: boolean;
   /** The right-click ability: which trait drives it and how recharged it is (1 = ready). Null without traits. */
   ability: { trait: Trait; charge: number } | null;
 }
@@ -376,6 +394,7 @@ export class GameScene extends Phaser.Scene {
   private nudges = 0;
   private outcome: Outcome | null = null;
   private powerFx!: Phaser.GameObjects.Graphics;
+  private charmFx!: Phaser.GameObjects.Graphics;
   private irritated = false;
   private bumps = 0;
   private bumpLeft = 0;
@@ -439,6 +458,7 @@ export class GameScene extends Phaser.Scene {
     for (let p = 0; p <= GRID_SIZE; p += GRID_TILE) this.grid.lineBetween(p, 0, p, GRID_SIZE).lineBetween(0, p, GRID_SIZE, p);
     this.setBackdrop(this.tutorial ? 0x000000 : FIELD_COLOUR);
     this.powerFx = this.add.graphics().setDepth(12);
+    this.charmFx = this.add.graphics().setDepth(4.2);
 
     this.player = this.physics.add.sprite(START, START, 'player').setDepth(10).setScale(SPRITE_SCALE);
     this.player.setCircle(13 * T, 3 * T, 3 * T);
@@ -488,7 +508,7 @@ export class GameScene extends Phaser.Scene {
     this.gems = this.physics.add.group({ defaultKey: 'gem', maxSize: 600 });
     this.motes = this.physics.add.group({ defaultKey: 'mote', maxSize: 120 });
 
-    this.physics.add.collider(this.enemies, this.enemies);
+    this.physics.add.collider(this.enemies, this.enemies, (a, b) => this.spreadCharm(a as Sprite, b as Sprite));
     this.physics.add.overlap(this.bullets, this.enemies, (b, e) => this.onBulletHit(b as Sprite, e as Sprite));
     this.physics.add.overlap(this.player, this.enemies, (_p, e) => this.onPlayerTouch(e as Sprite));
     this.physics.add.overlap(this.player, this.enemyBullets, (_p, b) => this.onEnemyBullet(b as Sprite));
@@ -737,6 +757,7 @@ export class GameScene extends Phaser.Scene {
       elapsed: this.elapsed,
       gemArrow: this.gemArrow(),
       tutorial: this.tutorial,
+      hell: this.mode === 'hell',
       ability: this.abilityHud(),
     };
   }
@@ -882,7 +903,8 @@ export class GameScene extends Phaser.Scene {
     let bestD = range * range;
     for (const obj of this.enemies.getChildren()) {
       const e = obj as Sprite;
-      if (!e.active || (view && !view.contains(e.x, e.y))) continue;
+      // Charmed enemies are never picked: only a shot you aim yourself can hurt one.
+      if (!e.active || e.getData('charmed') || (view && !view.contains(e.x, e.y))) continue;
       const d = Phaser.Math.Distance.Squared(e.x, e.y, this.player.x, this.player.y);
       if (d < bestD) {
         bestD = d;
@@ -996,6 +1018,10 @@ export class GameScene extends Phaser.Scene {
       mood: 'chase',
       tint,
       lost: 0,
+      charmed: false,
+      caught: 0,
+      spreads: 0,
+      phase: Math.random() * Math.PI * 2,
       absorb: 0,
       shootCd: Phaser.Math.FloatBetween(...ENEMY_SHOT_GAP),
       hp,
@@ -1005,6 +1031,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private steerEnemies(dt: number) {
+    this.charmFx.clear();
     for (const obj of this.enemies.getChildren()) {
       const e = obj as Sprite;
       if (!e.active) continue;
@@ -1020,12 +1047,22 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Comes straight at you, unless it has lost you: a baffled one stands puzzled, the others keep wandering the way they turned. */
+  /** Comes straight at you, unless it has lost you: a charmed one drifts beside you, the others keep wandering the way they turned. */
   private steerChaser(e: Sprite, dt: number, mood: Mood) {
-    const lost = e.getData('lost') as number;
-    if (lost > 0) {
-      e.setData('lost', lost - dt);
-      if (e.getData('baffled')) e.setVelocity(0, 0);
+    const lost = (e.getData('lost') as number) - dt;
+    if (lost + dt > 0) {
+      e.setData('lost', lost);
+      if (!e.getData('charmed')) return;
+      if (lost <= 0) {
+        // Coming to its senses, it recoils from you for a moment before it remembers what it was doing.
+        this.uncharm(e);
+        if ((e.getData('caught') as number) > 0) return;
+        const away = Phaser.Math.Angle.Between(this.player.x, this.player.y, e.x, e.y);
+        this.physics.velocityFromRotation(away, CHARM_RECOIL, (e.body as Phaser.Physics.Arcade.Body).velocity);
+        e.setData('knock', CHARM_RECOIL_SECONDS);
+        return;
+      }
+      this.steerCharmed(e, lost);
       return;
     }
     this.physics.moveToObject(e, this.player, e.getData('speed'));
@@ -1036,15 +1073,75 @@ export class GameScene extends Phaser.Scene {
     this.think(e, THOUGHTS.angry, { critical: true, shake: true });
   }
 
-  /** Phasing: nearby enemies are baffled, farther ones wander off. They find you again a little after you return. */
+  /** A charmed enemy comes close and then keeps pace beside you, bobbing like a curious seed, in a soft blue ring that fades as the charm runs out. */
+  private steerCharmed(e: Sprite, left: number) {
+    const p = this.player;
+    const body = e.body as Phaser.Physics.Arcade.Body;
+    if ((e.getData('caught') as number) > 0) {
+      // Caught it from another: it peels away from the horde, curving off to one side.
+      const away = Phaser.Math.Angle.Between(p.x, p.y, e.x, e.y) + ((e.getData('phase') as number) > Math.PI ? 0.9 : -0.9);
+      this.physics.velocityFromRotation(away, (e.getData('speed') as number) * 0.8, body.velocity);
+    } else if (Phaser.Math.Distance.Between(e.x, e.y, p.x, p.y) > CHARM_KEEP) {
+      this.physics.moveToObject(e, p, (e.getData('speed') as number) * 0.6);
+    } else {
+      const pv = (p.body as Phaser.Physics.Arcade.Body).velocity;
+      const toward = Phaser.Math.Angle.Between(e.x, e.y, p.x, p.y);
+      const bob = CURIOUS_BOB * Math.sin((this.time.now / 1000) * 2.6 + (e.getData('phase') as number));
+      body.velocity.set(pv.x * 0.7 + Math.cos(toward) * bob, pv.y * 0.7 + Math.sin(toward) * bob);
+    }
+    const fade = Math.min(1, left) * e.alpha;
+    const r = 15 * (e.scaleX / SPRITE_SCALE);
+    this.charmFx.fillStyle(TRAIT_COLOURS.calm, 0.14 * fade).fillCircle(e.x, e.y, r).lineStyle(1.5, TRAIT_COLOURS.calm, 0.75 * fade).strokeCircle(e.x, e.y, r);
+  }
+
+  /** Two enemies bump: if one is charmed and has it to give, the other catches it. */
+  private spreadCharm(a: Sprite, b: Sprite) {
+    const from = a.getData('charmed') ? a : b.getData('charmed') ? b : null;
+    if (!from) return;
+    const to = from === a ? b : a;
+    const left = from.getData('lost') as number;
+    const spreads = from.getData('spreads') as number;
+    if (to.getData('charmed') || to.getData('mood') !== 'chase' || spreads <= 0 || left < CHARM_MIN_LEFT) return;
+    const step = (from.getData('caught') as number) + 1;
+    from.setData('spreads', spreads - 1);
+    to.setData({ lost: left, charmed: true, absorb: 0, caught: step, spreads: step < CHARM_STEPS ? CHARM_SPREADS : 0 });
+    this.think(to, THOUGHTS.baffled);
+  }
+
+  /** The charm ends: it is an enemy again. */
+  private uncharm(e: Sprite) {
+    e.setData({ charmed: false, absorb: 0 });
+    e.setAlpha(1);
+  }
+
+  /** Holding against a charmed enemy takes it in: it fades into you, giving back a little energy and a point of experience. */
+  private takeIn(e: Sprite) {
+    if (this.frozen || !e.active) return;
+    const was = e.getData('absorb') as number;
+    if (was === 0) sfx.absorbing();
+    const p = Math.min(1, was + this.game.loop.delta / 1000 / CHARM_TAKE_SECONDS);
+    e.setData('absorb', p).setAlpha(1 - 0.8 * p);
+    this.absorbing = Math.max(this.absorbing, p);
+    if (p < 1) return;
+    e.disableBody(true, true);
+    sfx.absorbedCalm();
+    this.kills++;
+    this.heal(CHARM_HEAL);
+    this.gainXp(1);
+  }
+
+  /** Phasing: nearby enemies are charmed, farther ones lose you and wander off. They are themselves again a little after. */
   private loseEnemies() {
     for (const obj of this.enemies.getChildren()) {
       const e = obj as Sprite;
       if (!e.active) continue;
-      const near = Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y) < BAFFLE_RADIUS;
-      e.setData({ lost: PHASE_SECONDS + (near ? Phaser.Math.FloatBetween(0.3, 0.9) : Phaser.Math.FloatBetween(1, 2.2)), baffled: near });
-      if (near) this.think(e, THOUGHTS.baffled, { critical: true, seconds: PHASE_SECONDS + 0.3 });
-      else this.physics.velocityFromRotation(Math.random() * Math.PI * 2, (e.getData('speed') as number) * 0.4, (e.body as Phaser.Physics.Arcade.Body).velocity);
+      if (Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y) < CHARM_RADIUS) {
+        e.setData({ lost: CHARM_SECONDS + Phaser.Math.FloatBetween(0, 0.6), charmed: true, absorb: 0, caught: 0, spreads: CHARM_SPREADS });
+        this.think(e, THOUGHTS.baffled, { critical: true });
+      } else {
+        e.setData({ lost: PHASE_SECONDS + Phaser.Math.FloatBetween(1, 2.2), charmed: false });
+        this.physics.velocityFromRotation(Math.random() * Math.PI * 2, (e.getData('speed') as number) * 0.4, (e.body as Phaser.Physics.Arcade.Body).velocity);
+      }
     }
   }
 
@@ -1250,6 +1347,11 @@ export class GameScene extends Phaser.Scene {
       return true;
     }
     sfx.hit();
+    // A shot breaks a charm at once.
+    if (e.getData('charmed')) {
+      this.uncharm(e);
+      e.setData('lost', 0);
+    }
     // Shooting a seed in orientation aggravates it.
     if (this.tutorial && e.getData('mood') !== 'aggro') {
       this.notes.shotWhileCalm = true;
@@ -1356,8 +1458,10 @@ export class GameScene extends Phaser.Scene {
 
   /** In the tutorial a sprite inside you is slowly absorbed; afterwards, contact hurts. */
   private onPlayerTouch(e: Sprite) {
-    if (!this.tutorial) this.onPlayerHit();
-    else if (e.getData('irritated')) this.bump(e);
+    if (!this.tutorial) {
+      if (e.getData('charmed')) this.takeIn(e);
+      else this.onPlayerHit();
+    } else if (e.getData('irritated')) this.bump(e);
     else this.absorb(e);
   }
 
@@ -1644,7 +1748,11 @@ export class GameScene extends Phaser.Scene {
     if (!g.active) return;
     g.disableBody(true, true);
     sfx.gem();
-    this.xp++;
+    this.gainXp(1);
+  }
+
+  private gainXp(n: number) {
+    this.xp += n;
     while (this.xp >= this.xpToNext()) {
       this.xp -= this.xpToNext();
       this.level++;

@@ -231,7 +231,7 @@ export class UIScene extends Phaser.Scene {
     g.fillStyle(0x1e293b).fillRect(0, 0, w, 5);
     g.fillStyle(0x4ade80).fillRect(0, 0, (s.xp / s.xpNext) * w, 5);
 
-    this.info.setText(`lv ${s.level}   ${clock(s.elapsed)}   ${s.kills} kills`);
+    this.info.setText(`lv ${s.level}   ${clock(s.elapsed)}   ${s.kills} ${s.hell ? 'kills' : 'souls'}`);
     this.drawRadar(s.gemArrow);
     this.drawAbility(s.ability);
   }
@@ -343,9 +343,10 @@ export class UIScene extends Phaser.Scene {
 
   /** `onAgain` starts the next run right after orientation, as the same core; `onStart` goes back to the very beginning. */
   showGameOver(s: HudState, newBest: boolean, onAgain: (() => void) | null, onStart: () => void) {
-    const text = `Survived ${clock(s.elapsed)}  ·  Level ${s.level}  ·  ${s.kills} kills`;
+    const text = `Survived ${clock(s.elapsed)}  ·  Level ${s.level}  ·  ${s.kills} ${s.hell ? 'kills' : 'souls'}`;
     const best = bestRun();
-    const bestText = newBest ? 'New best!' : best ? `Best ${clock(best.time)}  ·  Level ${best.level}  ·  ${best.kills} kills` : '';
+    // The best run doesn't remember which way it went, so its count is left out.
+    const bestText = newBest ? 'New best!' : best ? `Best ${clock(best.time)}  ·  Level ${best.level}` : '';
     this.openMenu(() => {
       const { w, h } = this;
       const summary = this.label(w / 2, h * 0.43, text, { fontSize: '18px', color: '#cbd5e1' }).setOrigin(0.5);
