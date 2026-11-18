@@ -14,6 +14,8 @@ const RADAR_SIZE = 9;
 const RADAR_ALPHA = 0.7;
 /** Ignore taps on a fresh menu briefly, so a thumb lifting mid-fight can't pick for you. */
 const MENU_ARM_MS = 400;
+/** The HUD is hidden during the tutorial, then snaps in when the fight starts. */
+const HUD_SNAP_MS = 140;
 const FONT = 'system-ui, sans-serif';
 /** Where "Exit to site" goes: the games page that links here. */
 const SITE_URL = 'https://ledsec.dev/games/';
@@ -56,6 +58,8 @@ export class UIScene extends Phaser.Scene {
   private fsBtn?: Phaser.GameObjects.Container;
   private fsIcon?: Phaser.GameObjects.Graphics;
   private info!: Phaser.GameObjects.Text;
+  /** Whether the HUD (bars, info line, gem radar) is showing; off during the tutorial. */
+  private hudShown = false;
   private hint?: Phaser.GameObjects.Text;
   private menu?: Phaser.GameObjects.Container;
   /** Rebuilds the open menu's contents for the current screen size. */
@@ -110,6 +114,9 @@ export class UIScene extends Phaser.Scene {
     }
 
     const touch = this.sys.game.device.input.touch;
+    this.hud.setAlpha(0);
+    this.info.setAlpha(0);
+    this.hudShown = false;
     this.hint = this
       .label(
         this.w / 2,
@@ -141,6 +148,19 @@ export class UIScene extends Phaser.Scene {
     this.pauseBtn.setPosition(w - PAD - 22, PAD + 14);
     this.fsBtn?.setPosition(w - PAD - 22 - 54, PAD + 14);
 
+    // The tutorial is quiet: no bars, no numbers. When the fight starts, they snap in.
+    if (s.tutorial) {
+      this.hudShown = false;
+      this.hud.clear().setAlpha(0);
+      this.info.setAlpha(0);
+      this.radar.clear();
+      return;
+    }
+    if (!this.hudShown) {
+      this.hudShown = true;
+      this.tweens.add({ targets: [this.hud, this.info], alpha: { from: 0, to: 1 }, duration: HUD_SNAP_MS, ease: 'Cubic.Out' });
+    }
+
     g.fillStyle(0x1e293b).fillRoundedRect(PAD, PAD, barW, 12, 6);
     const hpW = Math.max(0, (s.hp / s.maxHp) * barW);
     // Rounded rects glitch when narrower than their corner radius.
@@ -149,7 +169,7 @@ export class UIScene extends Phaser.Scene {
     g.fillStyle(0x1e293b).fillRect(0, 0, w, 5);
     g.fillStyle(0x4ade80).fillRect(0, 0, (s.xp / s.xpNext) * w, 5);
 
-    this.info.setText(`Lv ${s.level}   ${clock(s.elapsed)}   ${s.kills} kills`);
+    this.info.setText(`lv ${s.level}   ${clock(s.elapsed)}   ${s.kills} kills`);
     this.drawRadar(s.gemArrow);
   }
 
@@ -220,7 +240,7 @@ export class UIScene extends Phaser.Scene {
         this.title('Game over', h * 0.28),
         summary,
         record,
-        ...this.menuButton('Play again', h * 0.64, onRestart, { dx: -PAIR_OFFSET }),
+        ...this.menuButton('again', h * 0.64, onRestart, { dx: -PAIR_OFFSET }),
         ...this.exitButton(h * 0.64),
       ];
     });
@@ -236,6 +256,7 @@ export class UIScene extends Phaser.Scene {
         ...this.exitButton(h * 0.68),
         ...this.soundButton(),
         ...this.labelsButton(),
+        this.label(this.w - PAD, this.h - 14, `v${__APP_VERSION__} · ${__APP_COMMIT__}`, { fontSize: '11px', color: '#475569' }).setOrigin(1, 1),
       ];
     });
   }
@@ -305,8 +326,9 @@ export class UIScene extends Phaser.Scene {
   }
 
   /** Text rasterised at device resolution, so the zoomed camera doesn't blur it. */
+  /** All in-game text is lowercase (a style choice), so it's lowered here rather than at each call. */
   private label(x: number, y: number, text: string, style: Phaser.Types.GameObjects.Text.TextStyle) {
-    return this.add.text(x, y, text, { fontFamily: FONT, resolution: pixelRatio(), ...style });
+    return this.add.text(x, y, text.toLowerCase(), { fontFamily: FONT, resolution: pixelRatio(), ...style });
   }
 
   private title(text: string, y: number) {

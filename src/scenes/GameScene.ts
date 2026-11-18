@@ -173,6 +173,8 @@ export interface HudState {
    * down) and the direction to the nearest gem. Null while a gem is visible, or there are none.
    */
   gemArrow: { px: number; py: number; angle: number } | null;
+  /** The HUD stays hidden during the tutorial. */
+  tutorial: boolean;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -460,6 +462,7 @@ export class GameScene extends Phaser.Scene {
       kills: this.kills,
       elapsed: this.elapsed,
       gemArrow: this.gemArrow(),
+      tutorial: this.tutorial,
     };
   }
 

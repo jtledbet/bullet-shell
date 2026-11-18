@@ -6,6 +6,10 @@ import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
 import { UIScene } from './scenes/UIScene';
 
+/** e.g. "v0.7.0 · 06e8797". Also in the pause menu. */
+export const VERSION = `v${__APP_VERSION__} · ${__APP_COMMIT__}`;
+console.info(`bullet shell ${VERSION}`);
+
 const parent = document.getElementById('game')!;
 const dpr = pixelRatio();
 
