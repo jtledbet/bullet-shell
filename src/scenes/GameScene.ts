@@ -44,6 +44,10 @@ const T = TEX_SCALE;
 const SHOTGUN_RANGE = 230;
 const SHOTGUN_SPREAD = 0.75;
 const SHOTGUN_SPEED = 620;
+/** Embers shed sparks: about this many per enemy per second, and a burst when one dies. */
+const FLECKS_PER_SECOND = 0.8;
+const FLECKS_ON_KILL = 9;
+
 /** The player's plasma: wisps roiling around the centre, and a trail while moving. */
 const PLASMA_WISPS = 4;
 const TRAIL_MIN_SPEED = 20;
@@ -102,11 +106,16 @@ type Mood = 'chase' | (typeof TUTORIAL_MOODS)[number];
  * Subtle tells for a tutorial enemy's temperament: a tint multiplied over the sprite and a
  * size relative to normal. Aggro is a little redder, skeptical (timid) a little smaller.
  */
-const MOOD_LOOK: Record<Mood, { tint: number; size: number }> = {
-  chase: { tint: 0xffffff, size: 1 },
-  curious: { tint: 0xffffff, size: 1 },
-  skeptical: { tint: 0xffffff, size: 0.85 },
-  aggro: { tint: 0xffa8a8, size: 1 },
+/**
+ * How each temperament burns. Curious: a warm, steady glow. Skeptical: small, banked coals
+ * that barely spark. Aggro: flaring at full heat, a little bigger, throwing sparks. (Tints
+ * multiply, so white is the brightest the ember gets.) `sparks` is per second.
+ */
+const MOOD_LOOK: Record<Mood, { tint: number; size: number; sparks: number }> = {
+  chase: { tint: 0xffffff, size: 1, sparks: FLECKS_PER_SECOND },
+  curious: { tint: 0xe6c8b8, size: 1, sparks: 0.6 },
+  skeptical: { tint: 0x9a7a78, size: 0.85, sparks: 0.25 },
+  aggro: { tint: 0xffffff, size: 1.08, sparks: 3 },
 };
 /** How long a change of temperament takes to show (ms). */
 const MOOD_EASE_MS = 500;
@@ -238,6 +247,7 @@ export class GameScene extends Phaser.Scene {
   private hardEdge!: Phaser.GameObjects.Graphics;
   private wisps: Phaser.GameObjects.Image[] = [];
   private trail!: Phaser.GameObjects.Particles.ParticleEmitter;
+  private flecks!: Phaser.GameObjects.Particles.ParticleEmitter;
   private hadFocus = true;
   /** Same media query that shows #rotate in index.html. */
   private readonly rotatePrompt = window.matchMedia('(orientation: portrait) and (pointer: coarse)');
@@ -287,6 +297,16 @@ export class GameScene extends Phaser.Scene {
       blendMode: Phaser.BlendModes.ADD,
       emitting: false,
     }).setDepth(9);
+    this.flecks = this.add.particles(0, 0, 'fleck', {
+      lifespan: { min: 350, max: 750 },
+      speed: { min: 8, max: 38 },
+      angle: { min: 0, max: 360 },
+      gravityY: -25,
+      scale: { start: SPRITE_SCALE * 1.1, end: 0 },
+      alpha: { start: 0.9, end: 0 },
+      blendMode: Phaser.BlendModes.ADD,
+      emitting: false,
+    }).setDepth(4.5);
     this.setAnger(0);
     this.hardEdge = this.add.graphics().setDepth(12);
 
@@ -415,6 +435,7 @@ export class GameScene extends Phaser.Scene {
     this.player.setAlpha(this.ghostAlpha() * flicker * (this.phaseLeft > 0 ? 0.35 : 1));
     this.drawHardEdge();
     this.drawPlasma();
+    this.shedFlecks(dt);
     this.angerOverlay.setPosition(this.player.x, this.player.y).setAlpha(ANGER_RED * this.anger * this.player.alpha);
 
     this.ui.updateHud(this.hudState());
@@ -813,6 +834,7 @@ export class GameScene extends Phaser.Scene {
       this.kills++;
       sfx.kill();
       this.dropGem(e.x, e.y);
+      this.flecks.explode(FLECKS_ON_KILL, e.x, e.y);
       e.disableBody(true, true);
       if (this.tutorial) {
         this.notes.killed++;
@@ -894,6 +916,20 @@ export class GameScene extends Phaser.Scene {
   /** Calm fades the core toward a ghost. */
   private ghostAlpha() {
     return Math.max(CALM_MIN_ALPHA, 1 - CALM_FADE * this.trait('calm'));
+  }
+
+  /** Sparks drift off the embers on screen, at a steady rate per enemy. */
+  private shedFlecks(dt: number) {
+    const view = this.cameras.main.worldView;
+    const embers = (this.enemies.getChildren() as Sprite[]).filter((e) => e.active && view.contains(e.x, e.y));
+    if (!embers.length) return;
+    for (const e of embers) {
+      // Each ember's chance this frame comes from how its temperament burns.
+      if (Math.random() >= MOOD_LOOK[e.getData('mood') as Mood].sparks * dt) continue;
+      const a = Math.random() * Math.PI * 2;
+      const r = 10 * (e.scaleX / SPRITE_SCALE);
+      this.flecks.emitParticleAt(e.x + Math.cos(a) * r, e.y + Math.sin(a) * r, 1);
+    }
   }
 
   /** Wisps drift around the centre at different speeds, pulsing in size and brightness; a trail follows while moving. */

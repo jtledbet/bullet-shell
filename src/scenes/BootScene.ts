@@ -27,9 +27,13 @@ export class BootScene extends Phaser.Scene {
       [1, 'rgba(124,58,237,0)'],
     ]);
 
-    g.fillStyle(0xf43f5e).fillCircle(16 * S, 16 * S, 12 * S);
-    g.fillStyle(0x020617).fillCircle(12 * S, 13 * S, 2.5 * S).fillCircle(20 * S, 13 * S, 2.5 * S);
-    tex('enemy', 32);
+    this.ember();
+    // A spark that drifts off the embers.
+    this.glow('fleck', 4, [
+      [0, 'rgba(255,236,170,1)'],
+      [0.4, 'rgba(255,140,60,0.8)'],
+      [1, 'rgba(255,80,30,0)'],
+    ]);
 
     g.fillStyle(0xfde047).fillCircle(8 * S, 8 * S, 5 * S);
     tex('bullet', 16);
@@ -44,6 +48,43 @@ export class BootScene extends Phaser.Scene {
 
     g.destroy();
     this.scene.start('game');
+  }
+
+  /**
+   * Enemies: a smouldering ember. A dark coal body that runs hot toward its rim, a faint
+   * heat haze around it, and two glowing eyes. Toughness darkens it further with a tint.
+   */
+  private ember() {
+    const px = 32 * S;
+    const c = px / 2;
+    const canvas = this.textures.createCanvas('enemy', px, px)!;
+    const ctx = canvas.getContext();
+    const haze = ctx.createRadialGradient(c, c, 10 * S, c, c, 16 * S);
+    haze.addColorStop(0, 'rgba(255,90,40,0.5)');
+    haze.addColorStop(1, 'rgba(255,60,30,0)');
+    ctx.fillStyle = haze;
+    ctx.fillRect(0, 0, px, px);
+    // Slightly off-centre, so the coal looks lit from within rather than flat.
+    const body = ctx.createRadialGradient(c - 2 * S, c + 1 * S, 0, c, c, 12 * S);
+    body.addColorStop(0, '#2a0806');
+    body.addColorStop(0.6, '#5c0f0a');
+    body.addColorStop(0.86, '#c2321a');
+    body.addColorStop(1, '#ff7a3d');
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.arc(c, c, 12 * S, 0, Math.PI * 2);
+    ctx.fill();
+    for (const ex of [12, 20]) {
+      const eye = ctx.createRadialGradient(ex * S, 13 * S, 0, ex * S, 13 * S, 3.2 * S);
+      eye.addColorStop(0, 'rgba(255,240,190,1)');
+      eye.addColorStop(0.55, 'rgba(255,190,90,1)');
+      eye.addColorStop(1, 'rgba(255,120,40,0)');
+      ctx.fillStyle = eye;
+      ctx.beginPath();
+      ctx.arc(ex * S, 13 * S, 3.2 * S, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    canvas.refresh();
   }
 
   /** A soft round glow (radial gradient), `size` world units across. */
