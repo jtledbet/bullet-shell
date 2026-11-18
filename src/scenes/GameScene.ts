@@ -98,6 +98,24 @@ const BROOD_DISTANCE: [number, number] = [110, 170];
 const BROOD_SIZE = 0.7;
 const BROOD_HP = 2;
 const POP_MS = 260;
+/**
+ * Tutorial dead ends. Standing still (no moving, no shooting) this long irritates every seed:
+ * they turn aggro and bump you (a shove, no damage) instead of sinking in. A few bumps end the
+ * tutorial in bullet hell. Getting this far from every seed ends it in bullet heaven.
+ */
+const IDLE_IRRITATE_SECONDS = 25;
+const IDLE_BUMPS_TO_END = 3;
+const BUMP_SPEED = 380;
+const BUMP_SECONDS = 0.18;
+const BUMP_GAP_SECONDS = 0.6;
+const RUN_AWAY_DISTANCE = 1100;
+/** Temperament tells. Curious seeds bob toward you (drifting closer while far); skeptical ones flinch when you come near; aggro ones tremble. */
+const CURIOUS_BOB = 22;
+const CURIOUS_DRIFT = 8;
+const CURIOUS_NEAR = 160;
+const FLINCH_SPEED = 260;
+const FLINCH_SECONDS = 0.15;
+const TREMBLE_DEG = 4;
 
 /** How an enemy moves. Normal enemies chase; the tutorial enemy has a temperament, and turns aggro when shot. */
 type Mood = 'chase' | (typeof TUTORIAL_MOODS)[number];
@@ -134,7 +152,7 @@ const ENEMY_SHOT_GAP: [number, number] = [1.8, 3.6];
  * What the core becomes from the tutorial, one point per seed:
  * hard (seeds killed), calm (curious or skeptical seeds let in), rage (aggro seeds let in).
  */
-type Trait = 'hard' | 'calm' | 'rage';
+export type Trait = 'hard' | 'calm' | 'rage';
 /** Hard: each point cuts damage taken by this fraction. */
 const HARD_ARMOR = 0.12;
 /** Hard: width (world px) of the dark edge per point, capped. */
@@ -184,6 +202,8 @@ export interface HudState {
   gemArrow: { px: number; py: number; angle: number } | null;
   /** The HUD stays hidden during the tutorial. */
   tutorial: boolean;
+  /** The right-click ability: which trait drives it and how recharged it is (1 = ready). Null without traits. */
+  ability: { trait: Trait; charge: number } | null;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -236,6 +256,13 @@ export class GameScene extends Phaser.Scene {
   private moodLabels: Phaser.GameObjects.Text[] = [];
   /** Brood seeds scheduled to pop up but not out yet; the tutorial can't end while any are pending. */
   private pendingSeeds = 0;
+  /** Tutorial: seconds standing idle, whether that has irritated the seeds, bumps taken, and the current bump. */
+  private idleTime = 0;
+  private irritated = false;
+  private bumps = 0;
+  private bumpLeft = 0;
+  private bumpGap = 0;
+  private readonly bumpVec = new Phaser.Math.Vector2();
   private traits: Record<Trait, number> = { hard: 0, calm: 0, rage: 0 };
   /** Breaks ties for the strongest trait. */
   private lastTrait: Trait | null = null;
@@ -270,6 +297,8 @@ export class GameScene extends Phaser.Scene {
     this.mode = 'heaven';
     this.notes = { startMood: 'curious', firstShot: null, shots: 0, shotWhileCalm: false, seconds: 0, killed: 0, absorbed: 0 };
     this.pendingSeeds = 0;
+    this.idleTime = this.bumps = this.bumpLeft = this.bumpGap = 0;
+    this.irritated = false;
     this.traits = { hard: 0, calm: 0, rage: 0 };
     this.lastTrait = this.lastAbility = null;
     this.abilityCooldown = this.phaseLeft = this.braceLeft = 0;
@@ -356,6 +385,7 @@ export class GameScene extends Phaser.Scene {
     this.scene.launch('ui');
     this.ui = this.scene.get('ui') as UIScene;
     this.ui.onPauseRequested = () => this.pauseGame();
+    this.ui.onAbilityRequested = () => this.useAbility();
   }
 
   private releaseKeys() {
@@ -416,7 +446,8 @@ export class GameScene extends Phaser.Scene {
     if (!this.tutorial) this.elapsed += dt;
     else this.notes.seconds += dt;
 
-    this.movePlayer();
+    this.movePlayer(dt);
+    this.watchTutorial(dt);
     this.steerEnemies(dt);
     this.pullGems();
     this.updateZoom(dt);
@@ -484,6 +515,7 @@ export class GameScene extends Phaser.Scene {
       elapsed: this.elapsed,
       gemArrow: this.gemArrow(),
       tutorial: this.tutorial,
+      ability: this.abilityHud(),
     };
   }
 
@@ -510,7 +542,7 @@ export class GameScene extends Phaser.Scene {
     return Math.floor(5 * Math.pow(this.level, 1.35));
   }
 
-  private movePlayer() {
+  private movePlayer(dt: number) {
     const k = this.keys;
     const kx = (k.D.isDown || k.RIGHT.isDown ? 1 : 0) - (k.A.isDown || k.LEFT.isDown ? 1 : 0);
     const ky = (k.S.isDown || k.DOWN.isDown ? 1 : 0) - (k.W.isDown || k.UP.isDown ? 1 : 0);
@@ -518,7 +550,34 @@ export class GameScene extends Phaser.Scene {
     if (kx || ky) v.set(kx, ky).normalize();
     else if (this.ui.sticks) v.copy(this.ui.sticks.move);
     else v.reset();
+    this.bumpGap = Math.max(0, this.bumpGap - dt);
+    if (this.bumpLeft > 0) {
+      // Being bumped: the shove carries you, easing off.
+      this.bumpLeft = Math.max(0, this.bumpLeft - dt);
+      const k = this.bumpLeft / BUMP_SECONDS;
+      this.player.setVelocity(this.bumpVec.x * k, this.bumpVec.y * k);
+      return;
+    }
     this.player.setVelocity(v.x * this.stats.speed, v.y * this.stats.speed);
+  }
+
+  /** Tutorial: standing idle too long irritates the seeds; running far enough from all of them ends it. */
+  private watchTutorial(dt: number) {
+    if (!this.tutorial) return;
+    const seeds = this.enemies.getChildren().filter((o) => o.active) as Sprite[];
+    if (!seeds.length) return;
+    this.idleTime = this.moveVec.lengthSq() > 0.01 ? 0 : this.idleTime + dt;
+    if (this.idleTime >= IDLE_IRRITATE_SECONDS && !this.irritated) {
+      this.irritated = true;
+      for (const e of seeds) {
+        e.setData('irritated', true);
+        if (e.getData('mood') === 'aggro') continue;
+        e.setData('mood', 'aggro');
+        this.showMood(e, true);
+      }
+    }
+    const nearest = Math.min(...seeds.map((e) => Phaser.Math.Distance.Between(this.player.x, this.player.y, e.x, e.y)));
+    if (nearest > RUN_AWAY_DISTANCE && this.pendingSeeds === 0) this.endTutorial('ran');
   }
 
   /** Manual aim (right stick or held mouse) wins; otherwise auto-aim at the nearest enemy in range. */
@@ -594,6 +653,7 @@ export class GameScene extends Phaser.Scene {
     if (!dir) return;
     this.fireCooldown = 1 / this.stats.fireRate;
     if (this.tutorial) {
+      this.idleTime = 0;
       this.notes.shots++;
       this.notes.firstShot ??= this.notes.seconds;
     }
@@ -675,7 +735,7 @@ export class GameScene extends Phaser.Scene {
     const e = this.enemies.get() as Sprite | null;
     if (!e) return;
     e.enableBody(true, x, y, true, true);
-    e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false).setAlpha(1);
+    e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false).setAlpha(1).setAngle(0);
     // Darker red means tougher.
     const hp = (3 + this.elapsed / 25) * Phaser.Math.FloatBetween(...TOUGHNESS_SPREAD);
     const tint = lerpColor(0xffffff, DARKEST_TINT, Phaser.Math.Clamp((hp - HP_LIGHTEST) / (HP_DARKEST - HP_LIGHTEST), 0, 1));
@@ -698,11 +758,34 @@ export class GameScene extends Phaser.Scene {
       // While knocked back, keep the shove velocity instead of chasing.
       const knock = e.getData('knock') as number;
       const mood = e.getData('mood') as Mood;
+      e.setAngle(mood === 'aggro' ? Phaser.Math.FloatBetween(-TREMBLE_DEG, TREMBLE_DEG) : 0);
       if (knock > 0) e.setData('knock', knock - dt);
-      else if (mood === 'curious') e.setVelocity(0, 0);
-      else if (mood === 'skeptical') this.steerWander(e, dt, true);
-      else this.physics.moveToObject(e, this.player, e.getData('speed'));
+      else if (mood === 'curious') this.steerCurious(e);
+      else if (mood === 'skeptical') {
+        if (!this.flinch(e)) this.steerWander(e, dt, true);
+      } else this.physics.moveToObject(e, this.player, e.getData('speed'));
     }
+  }
+
+  /** Bobs toward and away from you, drifting closer while far off. */
+  private steerCurious(e: Sprite) {
+    const d = Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y);
+    const toward = Phaser.Math.Angle.Between(e.x, e.y, this.player.x, this.player.y);
+    const bob = CURIOUS_BOB * Math.sin((this.time.now / 1000) * 2.6 + (e.getData('phase') as number));
+    this.physics.velocityFromRotation(toward, (d > CURIOUS_NEAR ? CURIOUS_DRIFT : 0) + bob, (e.body as Phaser.Physics.Arcade.Body).velocity);
+  }
+
+  /** The moment you come near, a skeptical seed jerks away and squashes. Returns true on that frame. */
+  private flinch(e: Sprite) {
+    const near = Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y) < SKEPTICAL_FLEE_RADIUS;
+    const was = e.getData('near') as boolean;
+    e.setData('near', near);
+    if (!near || was) return false;
+    const away = Phaser.Math.Angle.Between(this.player.x, this.player.y, e.x, e.y);
+    this.physics.velocityFromRotation(away, FLINCH_SPEED, (e.body as Phaser.Physics.Arcade.Body).velocity);
+    e.setData({ knock: FLINCH_SECONDS, wander: 0 });
+    this.tweens.add({ targets: e, scaleX: e.scaleX * 0.8, duration: 70, yoyo: true, ease: 'Sine.Out' });
+    return true;
   }
 
   /** Ambles about, heading back toward the player if it strays too far. With `flee`, runs from the player when close. */
@@ -763,9 +846,13 @@ export class GameScene extends Phaser.Scene {
     if (!e) return;
     e.enableBody(true, x, y, true, true);
     e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false).setAlpha(1);
-    e.setData({ mood, gen, baseSize: gen ? BROOD_SIZE : 1, hp: gen ? BROOD_HP : 3, speed: AGGRO_SPEED, knock: 0, wander: 0, absorb: 0, tint: 0xffffff });
+    e.setData({
+      mood, gen, baseSize: gen ? BROOD_SIZE : 1, hp: gen ? BROOD_HP : 3, speed: AGGRO_SPEED, knock: 0, wander: 0, absorb: 0, tint: 0xffffff,
+      phase: Math.random() * Math.PI * 2, near: false, irritated: false,
+    });
     this.showMood(e, false);
-    if (!gen) return;
+    if (!gen) return sfx.seed();
+    sfx.pop();
     const size = e.scaleX;
     e.setScale(0);
     this.tweens.add({ targets: e, scale: size, duration: POP_MS, ease: 'Back.Out' });
@@ -794,11 +881,19 @@ export class GameScene extends Phaser.Scene {
     this.endTutorial(this.notes.killed > this.notes.absorbed ? 'killed' : 'absorbed');
   }
 
-  /** First kill: auto-fire on, the grid fades in, and the normal run begins. */
-  private endTutorial(outcome: 'killed' | 'absorbed' = 'absorbed') {
+  /**
+   * The tutorial is over: the grid fades in and the normal run begins. Killing or standing idle
+   * leads to bullet hell; absorbing or running away, bullet heaven.
+   */
+  private endTutorial(outcome: 'killed' | 'absorbed' | 'idled' | 'ran' = 'absorbed') {
     const n = this.notes;
+    const hell = outcome === 'killed' || outcome === 'idled';
+    sfx.tutorialEnd(hell);
+    // Idling ends as hard (you stood there and took it); running away, as calm.
+    if (outcome === 'idled') this.gainTrait('hard');
+    if (outcome === 'ran') this.gainTrait('calm');
     const readout = [
-      outcome === 'killed' ? 'killed: bullet hell' : 'absorbed: bullet heaven',
+      `${outcome}: bullet ${hell ? 'hell' : 'heaven'}`,
       `was ${n.startMood}`,
       `first shot ${n.firstShot === null ? 'never' : n.firstShot.toFixed(1) + 's'}`,
       `${n.shots} shots`,
@@ -808,12 +903,17 @@ export class GameScene extends Phaser.Scene {
       `${n.seconds.toFixed(1)}s`,
     ].join('   ·   ');
     this.ui.showDebug(readout);
+    // Any seeds left (run from, or still bumping you) burn out.
+    for (const e of this.enemies.getChildren().filter((o) => o.active) as Sprite[]) {
+      this.flecks.explode(FLECKS_ON_KILL, e.x, e.y);
+      e.disableBody(true, true);
+    }
     if (TUTORIAL_ONLY) {
       this.time.delayedCall(TUTORIAL_REPEAT_MS, () => this.scene.restart());
       return;
     }
     this.tutorial = false;
-    this.mode = outcome === 'killed' ? 'hell' : 'heaven';
+    this.mode = hell ? 'hell' : 'heaven';
     this.stats.damage *= 1 + RAGE_DAMAGE * this.trait('rage');
     this.cameras.main.setBackgroundColor('rgba(0,0,0,0)');
     this.grid.setVisible(true).setAlpha(0);
@@ -885,18 +985,36 @@ export class GameScene extends Phaser.Scene {
 
   /** In the tutorial a sprite inside you is slowly absorbed; afterwards, contact hurts. */
   private onPlayerTouch(e: Sprite) {
-    if (this.tutorial) this.absorb(e);
-    else this.onPlayerHit();
+    if (!this.tutorial) this.onPlayerHit();
+    else if (e.getData('irritated')) this.bump(e);
+    else this.absorb(e);
+  }
+
+  /** An irritated seed shoves you away (no damage) and bounces back. Enough bumps end the tutorial. */
+  private bump(e: Sprite) {
+    if (this.frozen || this.bumpGap > 0) return;
+    const away = Phaser.Math.Angle.Between(e.x, e.y, this.player.x, this.player.y);
+    this.bumpVec.setToPolar(away, BUMP_SPEED);
+    this.bumpLeft = BUMP_SECONDS;
+    this.bumpGap = BUMP_GAP_SECONDS;
+    this.physics.velocityFromRotation(away + Math.PI, BUMP_SPEED / 2, (e.body as Phaser.Physics.Arcade.Body).velocity);
+    e.setData('knock', BUMP_SECONDS);
+    sfx.bump();
+    if (++this.bumps >= IDLE_BUMPS_TO_END) this.endTutorial('idled');
   }
 
   /** Progresses absorbing a tutorial sprite while it's inside you. An angry one swells and reddens you. */
   private absorb(e: Sprite) {
     if (this.frozen || !e.active) return;
-    const p = Math.min(1, (e.getData('absorb') as number) + this.game.loop.delta / 1000 / ABSORB_SECONDS);
+    const was = e.getData('absorb') as number;
+    if (was === 0) sfx.absorbing();
+    const p = Math.min(1, was + this.game.loop.delta / 1000 / ABSORB_SECONDS);
     e.setData('absorb', p).setAlpha(1 - 0.7 * p);
     if (e.getData('mood') === 'aggro') this.setAnger(Math.max(this.anger, p));
     if (p < 1) return;
     e.disableBody(true, true);
+    if (e.getData('mood') === 'aggro') sfx.absorbedAngry();
+    else sfx.absorbedCalm();
     this.notes.absorbed++;
     this.gainTrait(e.getData('mood') === 'aggro' ? 'rage' : 'calm');
     if (e.getData('mood') === 'aggro' && e.getData('gen') === 0) this.spawnBrood();
@@ -960,6 +1078,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** The strongest trait; ties go to the one gained most recently. None until the core has any. */
+  private abilityHud(): HudState['ability'] {
+    const trait = this.tutorial ? null : this.strongestTrait();
+    return trait ? { trait, charge: 1 - this.abilityCooldown / ABILITY_COOLDOWN } : null;
+  }
+
   private strongestTrait(): Trait | null {
     const best = Math.max(this.traits.hard, this.traits.calm, this.traits.rage);
     if (best === 0) return null;

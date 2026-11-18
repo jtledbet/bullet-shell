@@ -61,36 +61,38 @@ function begin(name: string, gap: number): number | null {
   return now;
 }
 
-/** Fades a gain in over a few ms (no click) and out by the end. */
-function envelope(at: number, dur: number, vol: number) {
+/** Fades a gain in (over a few ms by default, so no click; longer for a swell) and out by the end. */
+function envelope(at: number, dur: number, vol: number, attack = 0.004) {
   const g = ctx!.createGain();
   g.gain.setValueAtTime(0.0001, at);
-  g.gain.linearRampToValueAtTime(vol, at + 0.004);
+  g.gain.linearRampToValueAtTime(vol, at + attack);
   g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
   g.connect(master!);
   return g;
 }
 
 /** A pitch sweep from `from` to `to` Hz. */
-function tone(at: number, type: OscillatorType, from: number, to: number, dur: number, vol: number) {
+function tone(at: number, type: OscillatorType, from: number, to: number, dur: number, vol: number, attack?: number) {
   const osc = ctx!.createOscillator();
   osc.type = type;
   osc.frequency.setValueAtTime(from, at);
   osc.frequency.exponentialRampToValueAtTime(to, at + dur);
-  osc.connect(envelope(at, dur, vol));
+  osc.connect(envelope(at, dur, vol, attack));
   osc.start(at);
   osc.stop(at + dur + 0.02);
 }
 
 /** A burst of filtered white noise: low-passed by default, or high-passed for a crisp click or sizzle. */
-function noise(at: number, dur: number, vol: number, cutoff: number, type: BiquadFilterType = 'lowpass') {
+function noise(at: number, dur: number, vol: number, cutoff: number, type: BiquadFilterType = 'lowpass', attack?: number) {
   const c = ctx!;
   const src = c.createBufferSource();
   src.buffer = noiseSamples(c);
+  // Longer than the shared half second: loop it.
+  src.loop = true;
   const filter = c.createBiquadFilter();
   filter.type = type;
   filter.frequency.value = cutoff;
-  src.connect(filter).connect(envelope(at, dur, vol));
+  src.connect(filter).connect(envelope(at, dur, vol, attack));
   src.start(at, Math.random() * 0.3, dur + 0.02);
 }
 
@@ -141,6 +143,68 @@ export const sfx = {
     noise(t, 0.22, 0.3, 1600);
     tone(t, 'sine', vary(150), 45, 0.16, 0.25);
     tone(t, 'sine', vary(80, 0.04), 28, 0.42, 0.32);
+  },
+  /** Tutorial: a seed appears, a faint breath. */
+  seed() {
+    const t = begin('seed', 0.3);
+    if (t === null) return;
+    noise(t, 0.9, 0.05, 900, 'bandpass', 0.35);
+  },
+  /** Tutorial: a brood seed pops in. */
+  pop() {
+    const t = begin('pop', 0.08);
+    if (t === null) return;
+    noise(t, 0.015, 0.04, 3000, 'highpass');
+    tone(t, 'sine', vary(500), 900, 0.07, 0.08);
+  },
+  /** Tutorial: a seed starts sinking into you, a soft hum drawn inward. */
+  absorbing() {
+    const t = begin('absorbing', 0.3);
+    if (t === null) return;
+    tone(t, 'sine', 110, 220, 0.7, 0.06, 0.3);
+    tone(t, 'triangle', 220, 440, 0.7, 0.025, 0.3);
+  },
+  /** Tutorial: a calm seed absorbed, a warm exhale. */
+  absorbedCalm() {
+    const t = begin('absorbedCalm', 0.2);
+    if (t === null) return;
+    noise(t, 0.8, 0.06, 700, 'lowpass', 0.05);
+    tone(t, 'sine', 330, 220, 0.9, 0.05, 0.05);
+    tone(t, 'sine', 495, 330, 0.9, 0.03, 0.05);
+  },
+  /** Tutorial: an angry seed absorbed, a low throb under a sour interval. */
+  absorbedAngry() {
+    const t = begin('absorbedAngry', 0.2);
+    if (t === null) return;
+    tone(t, 'sine', 70, 45, 0.35, 0.22);
+    tone(t + 0.28, 'sine', 70, 45, 0.35, 0.18);
+    tone(t, 'sawtooth', 233, 233, 0.9, 0.025, 0.1);
+    tone(t, 'sawtooth', 247, 247, 0.9, 0.025, 0.1);
+  },
+  /** Tutorial: an irritated seed bumps you, a soft thud. */
+  bump() {
+    const t = begin('bump', 0.1);
+    if (t === null) return;
+    tone(t, 'sine', 120, 60, 0.12, 0.14);
+  },
+  /** The tutorial ends: a low swell, darker for bullet hell, more open for bullet heaven. */
+  tutorialEnd(hell: boolean) {
+    const t = begin('tutorialEnd', 1);
+    if (t === null) return;
+    if (hell) {
+      tone(t, 'sine', 41.2, 41.2, 2.4, 0.14, 0.9);
+      tone(t, 'sawtooth', 55, 52, 2.4, 0.04, 0.9);
+      tone(t, 'sine', 65.4, 65.4, 2.4, 0.05, 0.9);
+    } else {
+      for (const [hz, vol] of [[110, 0.07], [165, 0.05], [220, 0.04], [330, 0.025]]) tone(t, 'triangle', hz, hz, 2.6, vol, 0.9);
+    }
+  },
+  /** The ability, first showing after the tutorial: a quiet two-note chime. */
+  ready() {
+    const t = begin('ready', 0.5);
+    if (t === null) return;
+    tone(t, 'sine', 1319, 1319, 0.35, 0.06);
+    tone(t + 0.09, 'sine', 1976, 1976, 0.45, 0.045);
   },
   levelUp() {
     const t = begin('levelUp', 0.3);

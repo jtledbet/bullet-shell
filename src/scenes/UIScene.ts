@@ -4,7 +4,7 @@ import { sfx } from '../audio';
 import { pixelRatio } from '../display';
 import { refreshMusic } from '../music';
 import { bestRun, isMuted, labelsOn, setLabels, setMuted } from '../storage';
-import type { HudState } from './GameScene';
+import type { HudState, Trait } from './GameScene';
 import type { Upgrade } from '../upgrades';
 
 const PAD = 32; // clears rounded corners and notches in landscape
@@ -16,6 +16,9 @@ const RADAR_ALPHA = 0.7;
 const MENU_ARM_MS = 400;
 /** The HUD is hidden during the tutorial, then snaps in when the fight starts. */
 const HUD_SNAP_MS = 140;
+/** The ability button: its radius, and its colour for the trait driving it (steel, pale, red). */
+const ABILITY_R = 22;
+const ABILITY_COLOURS: Record<Trait, number> = { hard: 0x94a3b8, calm: 0xe9e5ff, rage: 0xf43f5e };
 const FONT = 'system-ui, sans-serif';
 /** Where "Exit to site" goes: the games page that links here. */
 const SITE_URL = 'https://ledsec.dev/games/';
@@ -51,6 +54,12 @@ function clock(seconds: number) {
 export class UIScene extends Phaser.Scene {
   sticks?: TwinStick;
   onPauseRequested?: () => void;
+  onAbilityRequested?: () => void;
+  private ability!: Phaser.GameObjects.Container;
+  private abilityGfx!: Phaser.GameObjects.Graphics;
+  private abilityReady = false;
+  /** Desktop: the "right-click" hint shows once, the first time the ability is ready. */
+  private abilityHinted = false;
   private hud!: Phaser.GameObjects.Graphics;
   private radar!: Phaser.GameObjects.Graphics;
   private pauseBtn!: Phaser.GameObjects.Container;
@@ -99,6 +108,17 @@ export class UIScene extends Phaser.Scene {
       if (p.button === 0) this.onPauseRequested?.();
     });
     this.pauseBtn = this.add.container(0, 0, [pauseBg, pauseIcon]).setDepth(150);
+
+    // The ability button: tap (or right-click anywhere on desktop). Hidden until the core has a trait.
+    this.abilityGfx = this.add.graphics();
+    const abilityZone = this.add.circle(0, 0, ABILITY_R + 10, 0x000000, 0.001).setInteractive({ useHandCursor: true });
+    abilityZone.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if (p.button === 0) this.onAbilityRequested?.();
+    });
+    this.ability = this.add.container(0, 0, [this.abilityGfx, abilityZone]).setDepth(150).setVisible(false);
+    this.abilityReady = false;
+    // The old scene's objects are gone after a restart.
+    this.debugText = undefined;
 
     this.fsBtn = this.fsIcon = undefined;
     if (canFullscreen()) {
@@ -154,6 +174,7 @@ export class UIScene extends Phaser.Scene {
       this.hud.clear().setAlpha(0);
       this.info.setAlpha(0);
       this.radar.clear();
+      this.drawAbility(null);
       return;
     }
     if (!this.hudShown) {
@@ -171,6 +192,48 @@ export class UIScene extends Phaser.Scene {
 
     this.info.setText(`lv ${s.level}   ${clock(s.elapsed)}   ${s.kills} kills`);
     this.drawRadar(s.gemArrow);
+    this.drawAbility(s.ability);
+  }
+
+  /** A round button in the trait's colour, with a ring that fills as it recharges and a pulse when ready. */
+  private drawAbility(a: HudState['ability']) {
+    if (!a) {
+      this.ability.setVisible(false);
+      this.abilityReady = false;
+      return;
+    }
+    const touch = this.sys.game.device.input.touch;
+    // Phones: just above where the right thumb rests. Desktop: the bottom-right corner.
+    const x = touch ? this.w - PAD - 64 : this.w - PAD - ABILITY_R;
+    const y = touch ? this.h - PAD - 150 : this.h - PAD - ABILITY_R;
+    const appearing = !this.ability.visible;
+    this.ability.setVisible(true).setPosition(x, y);
+    const colour = ABILITY_COLOURS[a.trait];
+    const ready = a.charge >= 1;
+    const g = this.abilityGfx.clear();
+    g.fillStyle(colour, ready ? 0.45 : 0.14).fillCircle(0, 0, ABILITY_R);
+    g.lineStyle(3, colour, 0.2).strokeCircle(0, 0, ABILITY_R + 5);
+    if (a.charge > 0) {
+      g.lineStyle(3, colour, 0.9).beginPath();
+      g.arc(0, 0, ABILITY_R + 5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, a.charge), false);
+      g.strokePath();
+    }
+    if (ready && (!this.abilityReady || appearing)) this.pulseAbility(appearing);
+    this.abilityReady = ready;
+  }
+
+  /** One soft pulse. When the button first appears, also a quiet chime and (desktop, once) a hint. */
+  private pulseAbility(appearing: boolean) {
+    this.tweens.add({ targets: this.ability, scale: { from: 1, to: 1.25 }, duration: 160, yoyo: true, ease: 'Sine.Out' });
+    if (!appearing) return;
+    sfx.ready();
+    if (this.abilityHinted || this.sys.game.device.input.touch) return;
+    this.abilityHinted = true;
+    const hint = this
+      .label(this.ability.x, this.ability.y - ABILITY_R - 12, 'right-click', { fontSize: '12px', color: '#94a3b8' })
+      .setOrigin(1, 1)
+      .setDepth(150);
+    this.tweens.add({ targets: hint, alpha: 0, delay: 2500, duration: 600, onComplete: () => hint.destroy() });
   }
 
   /** A small green arrow at the screen edge, on the line from the player toward the nearest off-screen gem. */
@@ -343,6 +406,7 @@ export class UIScene extends Phaser.Scene {
     if (this.sticks) this.sticks.enabled = false;
     this.pauseBtn.setVisible(false);
     this.fsBtn?.setVisible(false);
+    this.ability.setVisible(false);
     this.menuBuild = build;
     this.menuOpenedAt = this.time.now;
     this.buildMenu();
