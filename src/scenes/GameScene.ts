@@ -4,7 +4,7 @@ import { Face } from '../face';
 import { sfx } from '../audio';
 import { pixelRatio, TEX_SCALE } from '../display';
 import { restHum, setDanger, setHum, setPauseMusic } from '../music';
-import { devFlareOn, devShotgunOn, labelsOn, recordRun, setDev, setLabels } from '../storage';
+import { bestRun, devFlareOn, devShotgunOn, labelsOn, recordRun, setDev, setLabels } from '../storage';
 import { CORE_COLOURS, CORE_WHITE, POWER_NAMES, TRAIT_COLOURS, type Trait } from '../traits';
 import { baseStats, rollUpgrades, type Stats } from '../upgrades';
 
@@ -281,6 +281,21 @@ const FLARE_DAMAGE = 6;
 const FLARE_ENERGY = 0.4;
 /** Developer extra: flares this often from the first second. */
 const DEV_FLARE_EVERY = 2;
+/**
+ * A second wind. A new player (best run under RESCUE_BEST seconds, or none) whose health falls
+ * to RESCUE_HEALTH of full in the first RESCUE_WINDOW seconds of a run is offered one of two
+ * overpowered rescues, once: everything on screen destroyed, or RESCUE_SHIELD seconds in which
+ * nothing can hurt them. Either one also gives back RESCUE_HEAL of their health.
+ */
+const RESCUE_WINDOW = 150;
+const RESCUE_HEALTH = 0.3;
+const RESCUE_BEST = 120;
+const RESCUE_SHIELD = 30;
+const RESCUE_HEAL = 0.5;
+const RESCUES: { kind: 'clear' | 'shield'; name: string; desc: string }[] = [
+  { kind: 'clear', name: 'Clean Slate', desc: 'Everything on screen is gone' },
+  { kind: 'shield', name: 'Untouchable', desc: 'Nothing can hurt you for 30 seconds' },
+];
 /** Rage's power: a tight blast. Everything this close takes this many times your shot damage. */
 const BURST_RADIUS = 100;
 const BURST_DAMAGE = 10;
@@ -358,6 +373,10 @@ export class GameScene extends Phaser.Scene {
   private motes!: Phaser.Physics.Arcade.Group;
   private flares!: Phaser.Physics.Arcade.Group;
   private flareCooldown = 0;
+  /** Whether this run's second wind has been offered, and seconds of it left if they chose the shield. */
+  private rescued = false;
+  private shield = 0;
+  private shieldFx!: Phaser.GameObjects.Graphics;
   private grid!: Phaser.GameObjects.Graphics;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private readonly aimVec = new Phaser.Math.Vector2();
@@ -481,6 +500,9 @@ export class GameScene extends Phaser.Scene {
     for (let p = 0; p <= GRID_SIZE; p += GRID_TILE) this.grid.lineBetween(p, 0, p, GRID_SIZE).lineBetween(0, p, GRID_SIZE, p);
     this.setBackdrop(this.tutorial ? 0x000000 : FIELD_COLOUR);
     this.powerFx = this.add.graphics().setDepth(12);
+    this.shieldFx = this.add.graphics().setDepth(12);
+    this.rescued = false;
+    this.shield = 0;
     this.charmFx = this.add.graphics().setDepth(4.2);
 
     this.player = this.physics.add.sprite(START, START, 'player').setDepth(10).setScale(SPRITE_SCALE);
@@ -553,6 +575,13 @@ export class GameScene extends Phaser.Scene {
     kb.on('keydown-ESC', this.togglePause, this);
     kb.on('keydown-P', this.togglePause, this);
     kb.on('keydown-M', () => this.ui.toggleSound());
+    kb.on('keydown-E', () => this.useAbility());
+    // Esc leaves fullscreen without the page ever seeing the key, so pause when fullscreen ends.
+    const onFullscreen = () => {
+      if (!document.fullscreenElement) this.pauseGame();
+    };
+    document.addEventListener('fullscreenchange', onFullscreen);
+    this.events.once('shutdown', () => document.removeEventListener('fullscreenchange', onFullscreen));
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (p.rightButtonDown()) this.useAbility();
     });
@@ -677,6 +706,7 @@ export class GameScene extends Phaser.Scene {
     this.abilityCooldown = Math.max(0, this.abilityCooldown - dt);
     this.phaseLeft = Math.max(0, this.phaseLeft - dt);
     this.braceLeft = Math.max(0, this.braceLeft - dt);
+    this.shield = Math.max(0, this.shield - dt);
     const flicker = this.invuln > 0 && Math.floor(this.invuln * 12) % 2 ? 0.35 : 1;
     this.player.setAlpha(this.ghostAlpha() * flicker * (this.phaseLeft > 0 ? 0.35 : 1));
     this.drawHardEdge();
@@ -1643,6 +1673,13 @@ export class GameScene extends Phaser.Scene {
   private updateCore(dt: number) {
     const p = this.player;
     this.sizeCore();
+    // The shield from a second wind: a pale gold ring, flickering through its last three seconds.
+    this.shieldFx.clear();
+    if (this.shield > 0 && (this.shield > 3 || Math.floor(this.shield * 6) % 2 === 0)) {
+      const pulse = 0.65 + 0.25 * Math.sin(this.time.now / 180);
+      const r = 19 * (p.scaleX / SPRITE_SCALE);
+      this.shieldFx.fillStyle(0xfde68a, 0.1 * pulse).fillCircle(p.x, p.y, r).lineStyle(2, 0xfde68a, pulse).strokeCircle(p.x, p.y, r);
+    }
     const total = this.traits.hard + this.traits.calm + this.traits.rage;
     // The colour and the look deepen slowly over a run.
     if (!this.tutorial && total > 0) this.steep = Math.min(1, this.steep + dt / STEEP_SECONDS);
@@ -1819,7 +1856,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onPlayerHit() {
-    if (this.invuln > 0 || this.frozen || this.tutorial || this.phaseLeft > 0) return;
+    if (this.invuln > 0 || this.frozen || this.tutorial || this.phaseLeft > 0 || this.shield > 0) return;
     // Calm: some hits pass straight through.
     if (Math.random() < CALM_DODGE * this.trait('calm')) {
       this.invuln = DODGE_GRACE;
@@ -1831,9 +1868,58 @@ export class GameScene extends Phaser.Scene {
     this.invuln = INVULN_SECONDS;
     this.face.react('hit');
     this.cameras.main.shake(120, 0.006);
+    if (this.shouldRescue()) {
+      // Never let the hit that triggers it be the one that kills.
+      this.hp = Math.max(this.hp, 1);
+      return this.offerRescue();
+    }
     if (this.hp <= 0) this.gameOver();
     else sfx.hurt();
   }
+
+  /**
+   * Someone new who is about to die early is offered a second wind, once a run: a choice of
+   * two wildly strong rescues. "New" means their best run so far is short, or they have none.
+   */
+  private shouldRescue() {
+    if (this.rescued || this.tutorial || this.elapsed > RESCUE_WINDOW) return false;
+    if (this.hp > this.stats.maxHp * RESCUE_HEALTH) return false;
+    const best = bestRun();
+    return !best || best.time < RESCUE_BEST;
+  }
+
+  private offerRescue() {
+    this.rescued = true;
+    this.frozen = true;
+    this.physics.pause();
+    this.ui.updateHud(this.hudState());
+    restHum(true);
+    sfx.ready();
+    this.ui.showCards('Second wind', RESCUES, (card) => {
+      this.heal(this.stats.maxHp * RESCUE_HEAL);
+      if (card.kind === 'clear') this.clearScreen();
+      else this.shield = RESCUE_SHIELD;
+      this.invuln = 1;
+      this.face.react('joy');
+      this.frozen = false;
+      this.physics.resume();
+      restHum(false);
+      if (this.pendingLevels > 0) this.offerUpgrade();
+    });
+  }
+
+  /** Everything on screen is destroyed, shots included, in one white flash. */
+  private clearScreen() {
+    const view = this.cameras.main.worldView;
+    for (const obj of this.enemies.getChildren()) {
+      const e = obj as Sprite;
+      if (e.active && view.contains(e.x, e.y)) this.strike(e, e.getData('hp') as number);
+    }
+    for (const obj of this.enemyBullets.getChildren()) (obj as Sprite).disableBody(true, true);
+    this.cameras.main.flash(260, 255, 255, 255);
+    sfx.boom();
+  }
+
 
   private dropGem(x: number, y: number) {
     const g = this.gems.get() as Sprite | null;

@@ -57,7 +57,7 @@ export class UIScene extends Phaser.Scene {
   /** With labels on: the power's name beside its button. */
   private abilityCaption!: Phaser.GameObjects.Text;
   private abilityReady = false;
-  /** Desktop: the "right-click" hint shows once, the first time the ability is ready. */
+  /** Desktop: the "press e" hint shows once, the first time the power is ready. */
   private abilityHinted = false;
   private hud!: Phaser.GameObjects.Graphics;
   private radar!: Phaser.GameObjects.Graphics;
@@ -246,9 +246,9 @@ export class UIScene extends Phaser.Scene {
       return;
     }
     const touch = this.sys.game.device.input.touch;
-    // Phones: just above where the right thumb rests. Desktop: the bottom-right corner.
-    const x = touch ? this.w - PAD - 64 : this.w - PAD - ABILITY_R;
-    const y = touch ? this.h - PAD - 150 : this.h - PAD - ABILITY_R;
+    // Phones: just above where the right thumb rests. Desktop: top left, under the health bar, where the eye already goes.
+    const x = touch ? this.w - PAD - 64 : PAD + ABILITY_R + 5;
+    const y = touch ? this.h - PAD - 150 : PAD + 58 + ABILITY_R;
     const appearing = !this.ability.visible;
     const colour = TRAIT_COLOURS[a.trait];
     const ready = a.charge >= 1;
@@ -260,7 +260,8 @@ export class UIScene extends Phaser.Scene {
     this.abilityCaption
       .setVisible(labelsOn())
       .setText(POWER_NAMES[a.trait])
-      .setPosition(x - ABILITY_R - 14, y + bob)
+      .setOrigin(touch ? 1 : 0, 0.5)
+      .setPosition(touch ? x - ABILITY_R - 14 : x + ABILITY_R + 14, y + bob)
       .setAngle(Phaser.Math.FloatBetween(-shake, shake) * 2.5)
       .setAlpha(ready ? 1 : 0.5);
     const g = this.abilityGfx.clear();
@@ -283,8 +284,8 @@ export class UIScene extends Phaser.Scene {
     if (this.abilityHinted || this.sys.game.device.input.touch) return;
     this.abilityHinted = true;
     const hint = this
-      .label(this.ability.x, this.ability.y - ABILITY_R - 12, 'right-click', { fontSize: '12px', color: '#94a3b8' })
-      .setOrigin(1, 1)
+      .label(this.ability.x, this.ability.y + ABILITY_R + 12, 'press e', { fontSize: '12px', color: '#94a3b8' })
+      .setOrigin(0.5, 0)
       .setDepth(150);
     this.tweens.add({ targets: hint, alpha: 0, delay: 2500, duration: 600, onComplete: () => hint.destroy() });
   }
@@ -319,16 +320,21 @@ export class UIScene extends Phaser.Scene {
   }
 
   showLevelUp(choices: Upgrade[], onPick: (u: Upgrade) => void) {
-    this.openMenu(() => this.levelUpItems(choices, onPick));
+    this.showCards('Level up!', choices, onPick);
   }
 
-  private levelUpItems(choices: Upgrade[], onPick: (u: Upgrade) => void) {
+  /** A row of cards under a title; picking one closes the screen. */
+  showCards<T extends { name: string; desc: string }>(title: string, cards: T[], onPick: (card: T) => void) {
+    this.openMenu(() => this.cardItems(title, cards, onPick));
+  }
+
+  private cardItems<T extends { name: string; desc: string }>(title: string, choices: T[], onPick: (card: T) => void) {
     const { w, h } = this;
-    const items: Phaser.GameObjects.GameObject[] = [this.title('Level up!', h * 0.2)];
+    const items: Phaser.GameObjects.GameObject[] = [this.title(title, h * 0.2)];
     const cardW = Math.min(220, (w - PAD * 2 - 32) / 3);
     const cardH = Math.min(160, h * 0.45);
     choices.forEach((u, i) => {
-      const x = w / 2 + (i - 1) * (cardW + 16);
+      const x = w / 2 + (i - (choices.length - 1) / 2) * (cardW + 16);
       const card = this.add.rectangle(x, h * 0.55, cardW, cardH, 0x1e293b).setStrokeStyle(2, 0x5eead4);
       const name = this
         .label(x, h * 0.55 - cardH / 2 + 22, u.name, { fontSize: '19px', fontStyle: 'bold', color: '#f8fafc' })
@@ -509,6 +515,8 @@ export class UIScene extends Phaser.Scene {
 
   /** Shows the pause and fullscreen buttons plainly, then lets them fade back. They still work while faded. */
   private wakeCorner() {
+    // While a menu is open the fullscreen button simply stays lit.
+    if (this.menu) return;
     const buttons = [this.pauseBtn, ...(this.fsBtn ? [this.fsBtn] : [])];
     this.tweens.killTweensOf(buttons);
     for (const b of buttons) b.setAlpha(1);
@@ -520,7 +528,7 @@ export class UIScene extends Phaser.Scene {
     this.menu?.destroy();
     this.menu = this.menuBuild = undefined;
     this.pauseBtn.setVisible(true);
-    this.fsBtn?.setVisible(true);
+    this.fsBtn?.setDepth(150);
     this.wakeCorner();
     if (this.sticks) this.sticks.enabled = true;
   }
@@ -556,7 +564,12 @@ export class UIScene extends Phaser.Scene {
     this.sticks?.reset();
     if (this.sticks) this.sticks.enabled = false;
     this.pauseBtn.setVisible(false);
-    this.fsBtn?.setVisible(false);
+    // Fullscreen stays in reach on every menu: shown plainly, above the dimmed screen.
+    this.cornerTimer?.remove();
+    if (this.fsBtn) {
+      this.tweens.killTweensOf([this.pauseBtn, this.fsBtn]);
+      this.fsBtn.setDepth(210).setAlpha(1);
+    }
     this.ability.setVisible(false);
     this.abilityCaption.setVisible(false);
     this.menuBuild = build;
