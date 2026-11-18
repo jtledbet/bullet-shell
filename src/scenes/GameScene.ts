@@ -44,6 +44,14 @@ const T = TEX_SCALE;
 const SHOTGUN_RANGE = 230;
 const SHOTGUN_SPREAD = 0.75;
 const SHOTGUN_SPEED = 620;
+/** Enemies vary in toughness around the current base health, by up to this factor either way. */
+const TOUGHNESS_SPREAD: [number, number] = [0.75, 1.35];
+/** Shading by toughness: the base red at this much health or less, darkest at HP_DARKEST and up. */
+const HP_LIGHTEST = 2.5;
+const HP_DARKEST = 16;
+/** Multiplied over the red texture: white leaves it bright, this turns it a deep blood red. */
+const DARKEST_TINT = 0x7a2a35;
+
 /** Seconds an enemy hit by a pellet is shoved away from you instead of chasing. */
 const KNOCKBACK_SECONDS = 0.22;
 /** Shove speed at point blank and at the edge of the shotgun's reach; pellets landing together add up, to a cap. */
@@ -591,12 +599,16 @@ export class GameScene extends Phaser.Scene {
     if (!e) return;
     e.enableBody(true, x, y, true, true);
     e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false).setAlpha(1);
+    // Darker red means tougher.
+    const hp = (3 + this.elapsed / 25) * Phaser.Math.FloatBetween(...TOUGHNESS_SPREAD);
+    const tint = lerpColor(0xffffff, DARKEST_TINT, Phaser.Math.Clamp((hp - HP_LIGHTEST) / (HP_DARKEST - HP_LIGHTEST), 0, 1));
+    this.restoreTint(e.setData('tint', tint));
     e.setData({
       mood: 'chase',
-      tint: 0xffffff,
+      tint,
       absorb: 0,
       shootCd: Phaser.Math.FloatBetween(...ENEMY_SHOT_GAP),
-      hp: 3 + this.elapsed / 25,
+      hp,
       speed: Math.min(170, Phaser.Math.Between(70, 100) + this.elapsed * 0.3),
       knock: 0,
     });

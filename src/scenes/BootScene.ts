@@ -12,7 +12,8 @@ export class BootScene extends Phaser.Scene {
     // Sizes below are world units; everything is drawn S times larger (see TEX_SCALE).
     const tex = (key: string, size: number) => g.generateTexture(key, size * S, size * S).clear();
 
-    g.fillStyle(0x5eead4).fillCircle(16 * S, 16 * S, 13 * S);
+    // The core: a cool violet, well clear of the enemies' reds.
+    g.fillStyle(0xa78bfa).fillCircle(16 * S, 16 * S, 13 * S);
     g.lineStyle(3 * S, 0xffffff).strokeCircle(16 * S, 16 * S, 13 * S);
     tex('player', 32);
 
