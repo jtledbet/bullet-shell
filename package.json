@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
     "typecheck": "tsc --noEmit",
-    "deploy": "bash scripts/deploy.sh"
+    "deploy": "bash scripts/deploy.sh live",
+    "deploy:next": "bash scripts/deploy.sh next"
   },
   "dependencies": {
     "phaser": "^3.90.0"
