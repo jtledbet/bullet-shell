@@ -16,6 +16,22 @@ const SITE_URL = 'https://ledsec.dev/games/';
 /** Half the centre-to-centre gap between two side-by-side menu buttons. */
 const PAIR_OFFSET = 98;
 
+/** Fullscreen works in Android browsers and on desktop. iPhone Safari has no fullscreen API, so no button there. */
+const canFullscreen = () => !!document.fullscreenEnabled && typeof document.documentElement.requestFullscreen === 'function';
+
+/** Enters fullscreen (locking to landscape where the browser allows it), or leaves it. Must run inside a tap. */
+function toggleFullscreen() {
+  if (document.fullscreenElement) {
+    void document.exitFullscreen().catch(() => {});
+    return;
+  }
+  const orientation = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> };
+  document.documentElement
+    .requestFullscreen({ navigationUI: 'hide' })
+    .then(() => orientation?.lock?.('landscape'))
+    .catch(() => {});
+}
+
 /** Seconds as m:ss. */
 function clock(seconds: number) {
   const t = Math.floor(seconds);
@@ -31,6 +47,9 @@ export class UIScene extends Phaser.Scene {
   onPauseRequested?: () => void;
   private hud!: Phaser.GameObjects.Graphics;
   private pauseBtn!: Phaser.GameObjects.Container;
+  /** Only where fullscreen is supported. */
+  private fsBtn?: Phaser.GameObjects.Container;
+  private fsIcon?: Phaser.GameObjects.Graphics;
   private info!: Phaser.GameObjects.Text;
   private hint?: Phaser.GameObjects.Text;
   private menu?: Phaser.GameObjects.Container;
@@ -71,6 +90,19 @@ export class UIScene extends Phaser.Scene {
     });
     this.pauseBtn = this.add.container(0, 0, [pauseBg, pauseIcon]).setDepth(150);
 
+    this.fsBtn = this.fsIcon = undefined;
+    if (canFullscreen()) {
+      const fsBg = this.add.rectangle(0, 0, 44, 44, 0x1e293b, 0.7).setStrokeStyle(2, 0x334155);
+      this.fsIcon = this.add.graphics();
+      fsBg.setInteractive({ useHandCursor: true }).on('pointerup', (p: Phaser.Input.Pointer) => {
+        if (p.button === 0) toggleFullscreen();
+      });
+      this.fsBtn = this.add.container(0, 0, [fsBg, this.fsIcon]).setDepth(150);
+      this.drawFsIcon();
+      document.addEventListener('fullscreenchange', this.drawFsIcon);
+      this.events.once('shutdown', () => document.removeEventListener('fullscreenchange', this.drawFsIcon));
+    }
+
     const touch = this.sys.game.device.input.touch;
     this.hint = this
       .label(
@@ -101,6 +133,7 @@ export class UIScene extends Phaser.Scene {
     const g = this.hud.clear();
     const barW = Math.min(260, w * 0.3);
     this.pauseBtn.setPosition(w - PAD - 22, PAD + 14);
+    this.fsBtn?.setPosition(w - PAD - 22 - 54, PAD + 14);
 
     g.fillStyle(0x1e293b).fillRoundedRect(PAD, PAD, barW, 12, 6);
     const hpW = Math.max(0, (s.hp / s.maxHp) * barW);
@@ -200,6 +233,7 @@ export class UIScene extends Phaser.Scene {
     this.menu?.destroy();
     this.menu = this.menuBuild = undefined;
     this.pauseBtn.setVisible(true);
+    this.fsBtn?.setVisible(true);
     if (this.sticks) this.sticks.enabled = true;
   }
 
@@ -233,6 +267,7 @@ export class UIScene extends Phaser.Scene {
     this.sticks?.reset();
     if (this.sticks) this.sticks.enabled = false;
     this.pauseBtn.setVisible(false);
+    this.fsBtn?.setVisible(false);
     this.menuBuild = build;
     this.menuOpenedAt = this.time.now;
     this.buildMenu();
@@ -263,6 +298,28 @@ export class UIScene extends Phaser.Scene {
       action();
     });
   }
+
+  /** Four corner brackets: pointing out to go fullscreen, pointing in to leave it. */
+  private drawFsIcon = () => {
+    const g = this.fsIcon?.clear();
+    if (!g) return;
+    const full = !!document.fullscreenElement;
+    const r = 9;
+    const arm = 6;
+    g.lineStyle(2.5, 0xe2e8f0);
+    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      // The bracket's corner: at the box corner when expanding, pulled toward the centre when shrinking.
+      const cx = sx * (full ? r - arm : r);
+      const cy = sy * (full ? r - arm : r);
+      const dx = full ? sx * arm : -sx * arm;
+      const dy = full ? sy * arm : -sy * arm;
+      g.beginPath();
+      g.moveTo(cx + dx, cy);
+      g.lineTo(cx, cy);
+      g.lineTo(cx, cy + dy);
+      g.strokePath();
+    }
+  };
 
   private dismissHint() {
     if (!this.hint) return;
