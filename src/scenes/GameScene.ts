@@ -244,9 +244,9 @@ const TRAIT_CAP = 4;
 const PHASE_SECONDS = 1.2;
 const BRACE_SECONDS = 1.5;
 const BRACE_DAMAGE = 0.2;
-/** Rage's power: a shockwave this wide that hits everything in it for this many times your shot damage. */
-const BURST_RADIUS = 170;
-const BURST_DAMAGE = 4;
+/** Rage's power: a tight blast. Everything this close takes this many times your shot damage. */
+const BURST_RADIUS = 100;
+const BURST_DAMAGE = 10;
 /**
  * Energy. The core fires pieces of itself, so every volley and every blast spends a little
  * health. Firing alone can weaken you down to ENERGY_FLOOR of your health but no further. The
