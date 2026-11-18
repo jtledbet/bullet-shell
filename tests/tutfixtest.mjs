@@ -45,6 +45,7 @@ const infos = [];
 await send('Runtime.enable'); await send('Page.enable');
 await send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: false });
 await send('Page.navigate', { url: URL }); await sleep(4000);
+for (let i = 0; i < 60 && !(await evaluate(`!!window.game?.scene?.getScene?.('game')?.sys?.isActive()`)); i++) await sleep(250);
 for (let i = 0; i < 20 && (await evaluate(`audioDebug().state`)) !== 'running'; i++) { await key('keyDown', 'a', 'KeyA', 65); await key('keyUp', 'a', 'KeyA', 65); await sleep(500); }
 const counts = () => evaluate(`audioDebug().counts`);
 // Fresh tutorial with one seed of the given mood at distance d from the player.

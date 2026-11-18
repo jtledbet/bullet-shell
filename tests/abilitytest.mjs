@@ -47,6 +47,7 @@ await send('Runtime.enable'); await send('Page.enable');
 await send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: 1, mobile: TOUCH, screenOrientation: { type: 'landscapePrimary', angle: 90 } });
 await send('Emulation.setTouchEmulationEnabled', { enabled: TOUCH, maxTouchPoints: 5 });
 await send('Page.navigate', { url: URL }); await sleep(4000);
+for (let i = 0; i < 60 && !(await evaluate(`!!window.game?.scene?.getScene?.('game')?.sys?.isActive()`)); i++) await sleep(250);
 const ab = () => evaluate(`(() => { const u = ${U}, a = u.ability, r = game.canvas.getBoundingClientRect(), k = u.cameras.main.zoom * r.width / game.canvas.width;
   return { vis: a.visible, x: r.left + a.x * k, y: r.top + a.y * k, cd: ${G}.abilityCooldown, hint: u.children.list.filter(o => o.type === 'Text' && o.text === 'press e').length }; })()`);
 let a = await ab();

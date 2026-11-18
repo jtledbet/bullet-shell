@@ -304,9 +304,19 @@ const RESCUE_HEALTH = 0.3;
 const RESCUE_BEST = 120;
 const RESCUE_SHIELD = 30;
 const RESCUE_HEAL = 0.5;
-const RESCUES: { kind: 'clear' | 'shield'; name: string; desc: string }[] = [
-  { kind: 'clear', name: 'Clean Slate', desc: 'Everything on screen is gone' },
-  { kind: 'shield', name: 'Untouchable', desc: 'Nothing can hurt you for 30 seconds' },
+const RESCUES: { kind: 'clear' | 'shield'; name: string; desc: string; tip: string }[] = [
+  {
+    kind: 'clear',
+    name: 'Clean Slate',
+    desc: 'Everything on screen is gone',
+    tip: 'Every enemy you can see is destroyed at once, and half your energy comes back. This is offered once.',
+  },
+  {
+    kind: 'shield',
+    name: 'Untouchable',
+    desc: 'Nothing can hurt you for 30 seconds',
+    tip: 'Nothing can hurt you for a while, and half your energy comes back. Use the time to gather and grow.',
+  },
 ];
 /** Rage's power: a tight blast. Everything this close takes this many times your shot damage. */
 const BURST_RADIUS = 100;

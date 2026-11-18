@@ -13,14 +13,16 @@ if ! curl -s -o /dev/null http://127.0.0.1:5173/; then
   exit 1
 fi
 
-all="basicstest coretest energytest charmtest weapontest rescuetest desktoptest startest cornertest orbtest rotatetest devtest abilitytest tutfixtest traitstest broodtest"
+all="basicstest coretest energytest charmtest weapontest rescuetest desktoptest startest cornertest orbtest rotatetest devtest tiptest abilitytest tutfixtest traitstest broodtest"
 failed=""
 for name in ${@:-$all}; do
   echo "== $name"
-  rm -rf ".out/$name"
+  # Some checks keep more than one browser profile, in .out/<name>-a and so on: clear those too.
+  rm -rf ".out/$name" ".out/$name"-*
   out=$(node "$name.mjs" "$(pwd -W 2>/dev/null || pwd)/.out/$name" 2>&1)
   echo "$out" | grep -v "^PASS"
-  echo "$out" | grep -q "^ALL PASS" || failed="$failed $name"
+  # A check passes only if it says so and nothing in it (or in a script it runs) failed.
+  if echo "$out" | grep -Eq "^FAIL|FAILED|Error" || ! echo "$out" | grep -q "^ALL PASS"; then failed="$failed $name"; fi
 done
 
 if [ -n "$failed" ]; then

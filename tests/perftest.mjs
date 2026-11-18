@@ -46,6 +46,7 @@ const N = +(process.env.N ?? 40);
 await send('Runtime.enable'); await send('Page.enable');
 await send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: +process.env.DSF || 1, mobile: false });
 await send('Page.navigate', { url: URL }); await sleep(4000);
+for (let i = 0; i < 60 && !(await evaluate(`!!window.game?.scene?.getScene?.('game')?.sys?.isActive()`)); i++) await sleep(250);
 await evaluate(`(() => { const s = ${G}; if (s.tutorial) s.endTutorial('${process.env.OUTCOME || 'killed'}'); s.stats.maxHp = s.hp = 1e9; for (let i = 0; i < ${N}; i++) s.spawnEnemy(); })()`);
 await sleep(1500);
 // Time spent in script per frame, measured in-page around the game loop step.

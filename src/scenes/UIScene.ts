@@ -6,7 +6,7 @@ import { pixelRatio } from '../display';
 import { canFullscreen, toggleFullscreen } from '../fullscreen';
 import { refreshMusic } from '../music';
 import { bestRun, devFlareOn, devOn, devShotgunOn, isMuted, labelsOn, setDevFlare, setDevShotgun, setLabels, setMuted } from '../storage';
-import { POWER_NAMES, TRAIT_COLOURS } from '../traits';
+import { POWER_NAMES, POWER_TIPS, TRAIT_COLOURS, type Trait } from '../traits';
 import type { HudState } from './GameScene';
 import type { Upgrade } from '../upgrades';
 
@@ -67,6 +67,14 @@ export class UIScene extends Phaser.Scene {
   private fsBtn?: Phaser.GameObjects.Container;
   private fsIcon?: Phaser.GameObjects.Graphics;
   private cornerTimer?: Phaser.Time.TimerEvent;
+  private tipBox?: Phaser.GameObjects.Container;
+  private tipTimer?: Phaser.Time.TimerEvent;
+  /** The trait behind the power button right now, for its explanation, and whether this run has given it yet. */
+  private abilityTrait?: Trait;
+  private abilityExplained = false;
+  /** Desktop: hover areas over the health bar and the experience strip. */
+  private hpZone?: Phaser.GameObjects.Zone;
+  private xpZone?: Phaser.GameObjects.Zone;
   private orb?: Phaser.GameObjects.Image;
   private info!: Phaser.GameObjects.Text;
   /** Whether the HUD (bars, info line, gem radar) is showing; off during the tutorial. */
@@ -110,6 +118,15 @@ export class UIScene extends Phaser.Scene {
       if (p.button === 0) this.onPauseRequested?.();
     });
     this.pauseBtn = this.add.container(0, 0, [pauseBg, pauseIcon]).setDepth(150);
+    this.tip(pauseBg, 'Pause. Esc, P and Space do the same.');
+    this.tipBox = this.tipTimer = undefined;
+    this.abilityExplained = false;
+    this.hpZone = this.xpZone = undefined;
+    if (!this.sys.game.device.input.touch) {
+      const shown = (text: string) => () => (this.hudShown && !this.menu ? text : '');
+      this.hpZone = this.tip(this.add.zone(PAD, PAD - 6, 260, 24).setOrigin(0).setInteractive(), shown('Your energy. Hits take it, and so does every shot you fire. Firing alone can never take the last of it.'));
+      this.xpZone = this.tip(this.add.zone(0, 0, 100, 10).setOrigin(0).setInteractive(), shown('Gems fill this. When it is full you gain a level and choose a card.'));
+    }
 
     // The ability button: tap (or right-click anywhere on desktop). Hidden until the core has a trait.
     this.abilityGfx = this.add.graphics();
@@ -117,6 +134,7 @@ export class UIScene extends Phaser.Scene {
     abilityZone.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (p.button === 0) this.onAbilityRequested?.();
     });
+    this.tip(abilityZone, () => (this.abilityTrait ? POWER_TIPS[this.abilityTrait] : ''));
     // On desktop the button always carries the key that uses it.
     const abilityKey = this
       .label(0, 0, POWER.glyph, { fontSize: '16px', fontStyle: 'bold', color: '#f8fafc' })
@@ -138,6 +156,7 @@ export class UIScene extends Phaser.Scene {
         toggleFullscreen();
         this.wakeCorner();
       });
+      this.tip(fsBg, 'Fullscreen, on or off.');
       this.fsBtn = this.add.container(0, 0, [fsBg, this.fsIcon]).setDepth(150);
       this.drawFsIcon();
       document.addEventListener('fullscreenchange', this.drawFsIcon);
@@ -214,6 +233,8 @@ export class UIScene extends Phaser.Scene {
     const w = this.w;
     const g = this.hud.clear();
     const barW = Math.min(260, w * 0.3);
+    this.hpZone?.setSize(barW, 24);
+    this.xpZone?.setSize(w, 10);
     this.pauseBtn.setPosition(w - PAD - 22, PAD + 14);
     this.fsBtn?.setPosition(w - PAD - 22 - 54, PAD + 14);
 
@@ -257,6 +278,7 @@ export class UIScene extends Phaser.Scene {
     const x = touch ? this.w - PAD - 64 : PAD + ABILITY_R + 5;
     const y = touch ? this.h - PAD - 150 : PAD + 58 + ABILITY_R;
     const appearing = !this.ability.visible;
+    this.abilityTrait = a.trait;
     const colour = TRAIT_COLOURS[a.trait];
     const ready = a.charge >= 1;
     // Once ready, the button carries its trait's temperament, like the seeds: rage trembles, calm bobs, hard holds still.
@@ -288,6 +310,12 @@ export class UIScene extends Phaser.Scene {
     this.tweens.add({ targets: this.ability, scale: { from: 1, to: 1.25 }, duration: 160, yoyo: true, ease: 'Sine.Out' });
     if (!appearing) return;
     sfx.ready();
+    // The first time it shows in a run, the power says what it does.
+    if (this.abilityTrait && !this.abilityExplained) {
+      this.abilityExplained = true;
+      const touch = this.sys.game.device.input.touch;
+      this.showTip(POWER_TIPS[this.abilityTrait], touch ? this.ability.x - 300 : this.ability.x - ABILITY_R - 14, this.ability.y + (touch ? -30 : ABILITY_R + 16), 7);
+    }
     if (this.abilityHinted || this.sys.game.device.input.touch) return;
     this.abilityHinted = true;
     const hint = this
@@ -331,26 +359,29 @@ export class UIScene extends Phaser.Scene {
   }
 
   /** A row of cards under a title; picking one closes the screen. */
-  showCards<T extends { name: string; desc: string }>(title: string, cards: T[], onPick: (card: T) => void) {
+  showCards<T extends { name: string; desc: string; tip?: string }>(title: string, cards: T[], onPick: (card: T) => void) {
     this.openMenu(() => this.cardItems(title, cards, onPick));
   }
 
-  private cardItems<T extends { name: string; desc: string }>(title: string, choices: T[], onPick: (card: T) => void) {
+  private cardItems<T extends { name: string; desc: string; tip?: string }>(title: string, choices: T[], onPick: (card: T) => void) {
     const { w, h } = this;
-    const items: Phaser.GameObjects.GameObject[] = [this.title(title, h * 0.2)];
-    const cardW = Math.min(220, (w - PAD * 2 - 32) / 3);
-    const cardH = Math.min(160, h * 0.45);
+    const items: Phaser.GameObjects.GameObject[] = [this.title(title, h * 0.13)];
+    const cardW = Math.min(230, (w - PAD * 2 - 32) / 3);
+    const cardH = Math.min(230, h * 0.62);
+    const top = h * 0.57 - cardH / 2;
     choices.forEach((u, i) => {
       const x = w / 2 + (i - (choices.length - 1) / 2) * (cardW + 16);
-      const card = this.add.rectangle(x, h * 0.55, cardW, cardH, 0x1e293b).setStrokeStyle(2, 0x5eead4);
-      const name = this
-        .label(x, h * 0.55 - cardH / 2 + 22, u.name, { fontSize: '19px', fontStyle: 'bold', color: '#f8fafc' })
-        .setOrigin(0.5, 0);
+      const card = this.add.rectangle(x, top + cardH / 2, cardW, cardH, 0x1e293b).setStrokeStyle(2, 0x5eead4);
+      const name = this.label(x, top + 14, u.name, { fontSize: '19px', fontStyle: 'bold', color: '#f8fafc' }).setOrigin(0.5, 0);
+      // What it does, then what it is in plain words.
       const desc = this
-        .label(x, h * 0.55 + 6, u.desc, { fontSize: '15px', color: '#cbd5e1', align: 'center', wordWrap: { width: cardW - 24 } })
+        .label(x, top + 46, u.desc, { fontSize: '15px', color: '#5eead4', align: 'center', wordWrap: { width: cardW - 24 } })
+        .setOrigin(0.5, 0);
+      const tip = this
+        .label(x, desc.y + desc.height + 10, u.tip ?? '', { fontSize: '13px', color: '#cbd5e1', align: 'center', wordWrap: { width: cardW - 24 }, lineSpacing: 2 })
         .setOrigin(0.5, 0);
       this.makeButton(card, () => onPick(u));
-      items.push(card, name, desc);
+      items.push(card, name, desc, tip);
     });
     return items;
   }
@@ -373,8 +404,8 @@ export class UIScene extends Phaser.Scene {
         record,
         ...(onAgain
           ? [
-              ...this.menuButton('again', h * 0.64, onAgain, { dx: -PAIR_OFFSET * 2 }),
-              ...this.menuButton('from the start', h * 0.64, onStart, { dx: 0.001, quiet: true }),
+              ...this.menuButton('again', h * 0.64, onAgain, { dx: -PAIR_OFFSET * 2, tip: 'Straight back in as the same core, skipping orientation.' }),
+              ...this.menuButton('from the start', h * 0.64, onStart, { dx: 0.001, quiet: true, tip: 'Through orientation again. You could become something else.' }),
               ...this.exitButton(h * 0.64, PAIR_OFFSET * 2),
             ]
           : [...this.menuButton('again', h * 0.64, onStart, { dx: -PAIR_OFFSET }), ...this.exitButton(h * 0.64)]),
@@ -387,8 +418,8 @@ export class UIScene extends Phaser.Scene {
       const h = this.h;
       return [
         this.title('Paused', h * 0.25),
-        ...this.menuButton('Resume', h * 0.47, onResume),
-        ...this.menuButton('Restart', h * 0.68, onRestart, { dx: -PAIR_OFFSET }),
+        ...this.menuButton('Resume', h * 0.47, onResume, { tip: 'Back to it. Esc, P and Space do the same.' }),
+        ...this.menuButton('Restart', h * 0.68, onRestart, { dx: -PAIR_OFFSET, tip: 'Give up this run and start over from orientation.' }),
         ...this.exitButton(h * 0.68),
         ...this.resumeCorner(onResume),
         ...this.buildOrb(),
@@ -421,6 +452,7 @@ export class UIScene extends Phaser.Scene {
     const zone = this.add.rectangle(x, y, 48, 48, 0x000000, 0.001);
     this.orb = this.add.image(x, y, 'orb').setTint(onNext ? ORB_TO_LIVE : ORB_TO_NEXT).setDisplaySize(ORB_SIZE, ORB_SIZE);
     this.makeButton(zone, () => window.location.assign(new URL(onNext ? '../' : 'next/', window.location.href).href));
+    this.tip(zone, onNext ? 'Back to the finished game.' : 'The next build: newer, and less tested.');
     const caption = labelsOn()
       ? [this.label(x + ORB_SIZE / 2 + 8, y, onNext ? 'live' : 'next', { fontSize: '13px', color: '#94a3b8' }).setOrigin(0, 0.5)]
       : [];
@@ -445,6 +477,7 @@ export class UIScene extends Phaser.Scene {
     const btn = this.add.rectangle(x, y, 44, 44, 0x1e293b, 0.7).setStrokeStyle(2, 0x5eead4);
     const icon = this.add.graphics().fillStyle(0xe2e8f0).fillTriangle(x - 6, y - 10, x - 6, y + 10, x + 10, y);
     this.makeButton(btn, onResume);
+    this.tip(btn, 'Back to it.');
     return [btn, icon];
   }
 
@@ -455,6 +488,7 @@ export class UIScene extends Phaser.Scene {
     const btn = this.add.rectangle(x, y, 120, 44, 0x1e293b).setStrokeStyle(2, 0x475569);
     const label = this.label(x, y, isMuted() ? 'Sound: off' : 'Sound: on', { fontSize: '16px', color: '#cbd5e1' }).setOrigin(0.5);
     this.makeButton(btn, () => this.toggleSound(), true);
+    this.tip(btn, 'All sound, on or off. M does the same.');
     return [btn, label];
   }
 
@@ -465,6 +499,7 @@ export class UIScene extends Phaser.Scene {
     const btn = this.add.rectangle(x, y, 120, 44, 0x1e293b).setStrokeStyle(2, 0x475569);
     const label = this.label(x, y, labelsOn() ? 'Labels: on' : 'Labels: off', { fontSize: '16px', color: '#cbd5e1' }).setOrigin(0.5);
     this.makeButton(btn, () => this.toggleLabels(), true);
+    this.tip(btn, 'With labels on, every seed and enemy shows what it is thinking, and your power is named when you use it.');
     return [btn, label];
   }
 
@@ -532,6 +567,7 @@ export class UIScene extends Phaser.Scene {
   }
 
   closeMenu() {
+    this.hideTip();
     this.menu?.destroy();
     this.menu = this.menuBuild = undefined;
     this.pauseBtn.setVisible(true);
@@ -542,16 +578,49 @@ export class UIScene extends Phaser.Scene {
 
   /** Leaves the game for the site. Sits to the right of another button, styled quieter. */
   private exitButton(y: number, dx = PAIR_OFFSET) {
-    return this.menuButton('Exit to site', y, () => window.location.assign(SITE_URL), { dx, quiet: true });
+    return this.menuButton('Exit to site', y, () => window.location.assign(SITE_URL), { dx, quiet: true, tip: 'Leave the game for the games page.' });
   }
 
-  private menuButton(text: string, y: number, action: () => void, opts: { dx?: number; quiet?: boolean } = {}) {
+  private menuButton(text: string, y: number, action: () => void, opts: { dx?: number; quiet?: boolean; tip?: string } = {}) {
     const x = this.w / 2 + (opts.dx ?? 0);
     const width = opts.dx ? 180 : 200;
     const btn = this.add.rectangle(x, y, width, 56, 0x1e293b).setStrokeStyle(2, opts.quiet ? 0x475569 : 0x5eead4);
     const label = this.label(x, y, text, { fontSize: '20px', color: opts.quiet ? '#cbd5e1' : '#f8fafc' }).setOrigin(0.5);
     this.makeButton(btn, action);
+    if (opts.tip) this.tip(btn, opts.tip);
     return [btn, label];
+  }
+
+  /** Desktop: resting the mouse on `target` explains it. (Phones have no hover; cards and the power carry their own explanations.) */
+  private tip<T extends Phaser.GameObjects.GameObject>(target: T, text: string | (() => string)) {
+    if (this.sys.game.device.input.touch) return target;
+    target.on('pointerover', (p: Phaser.Input.Pointer) => {
+      const zoom = this.cameras.main.zoom;
+      this.showTip(typeof text === 'function' ? text() : text, p.x / zoom, p.y / zoom);
+    });
+    target.on('pointerout', () => this.hideTip());
+    return target;
+  }
+
+  /** A small box of explanation just below (x, y), kept on screen. With `seconds` it goes away by itself. */
+  showTip(text: string, x: number, y: number, seconds?: number) {
+    this.hideTip();
+    if (!text) return;
+    const label = this.label(10, 7, text, { fontSize: '13px', color: '#e2e8f0', wordWrap: { width: 250 }, lineSpacing: 2 });
+    const w = label.width + 20;
+    const h = label.height + 14;
+    const bg = this.add.rectangle(0, 0, w, h, 0x0b1222, 0.95).setOrigin(0).setStrokeStyle(1, 0x475569);
+    const bx = Phaser.Math.Clamp(x + 14, 8, Math.max(8, this.w - w - 8));
+    const by = y + 20 + h > this.h - 8 ? y - h - 12 : y + 20;
+    this.tipBox = this.add.container(bx, by, [bg, label]).setDepth(400);
+    if (seconds) this.tipTimer = this.time.delayedCall(seconds * 1000, () => this.hideTip());
+  }
+
+  hideTip() {
+    this.tipTimer?.remove();
+    this.tipTimer = undefined;
+    this.tipBox?.destroy();
+    this.tipBox = undefined;
   }
 
   /** Text rasterised at device resolution, so the zoomed camera doesn't blur it. */
@@ -586,6 +655,7 @@ export class UIScene extends Phaser.Scene {
 
   private buildMenu() {
     if (!this.menuBuild) return;
+    this.hideTip();
     this.menu?.destroy();
     const dim = this.add.rectangle(0, 0, this.w, this.h, 0x020617, 0.75).setOrigin(0);
     this.menu = this.add.container(0, 0, [dim, ...this.menuBuild()]).setDepth(200);

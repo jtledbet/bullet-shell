@@ -46,7 +46,15 @@ export async function open({ out, port, url, width = 844, height = 390, dsf = 1,
   await send('Runtime.enable'); await send('Page.enable');
   await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: dsf, mobile, screenOrientation: mobile ? { type: width > height ? 'landscapePrimary' : 'portraitPrimary', angle: width > height ? 90 : 0 } : undefined });
   await send('Emulation.setTouchEmulationEnabled', { enabled: touch, maxTouchPoints: 5 });
-  await send('Page.navigate', { url }); await sleep(4000);
+  // Waits until the game has finished loading. (Until then, window.game is the page's <div id="game">.)
+  const ready = async () => {
+    for (let i = 0; i < 60; i++) {
+      if (await evaluate(`!!window.game?.scene?.getScene?.('game')?.sys?.isActive()`).catch(() => false)) return;
+      await sleep(250);
+    }
+    throw new Error('the game never finished loading');
+  };
+  await send('Page.navigate', { url }); await sleep(4000); await ready();
   const G = `game.scene.getScene('game')`; const U = `game.scene.getScene('ui')`;
   // Screen position (CSS px) of something laid out in the UI scene.
   const uiPoint = (expr) => evaluate(`(() => { const u = ${U}, o = ${expr}, r = game.canvas.getBoundingClientRect(), k = u.cameras.main.zoom * r.width / game.canvas.width; return { x: r.left + o.x * k, y: r.top + o.y * k }; })()`);
@@ -57,5 +65,5 @@ export async function open({ out, port, url, width = 844, height = 390, dsf = 1,
     console.log(failed ? `${failed} FAILED` : 'ALL PASS');
     ws.close(); chrome.kill(); process.exit(0);
   };
-  return { send, evaluate, shot, tap, touchEv, key, press, mouse, click, check, sleep, G, U, uiPoint, menuTexts, uiTexts, logs, infos, done };
+  return { send, evaluate, ready, shot, tap, touchEv, key, press, mouse, click, check, sleep, G, U, uiPoint, menuTexts, uiTexts, logs, infos, done };
 }

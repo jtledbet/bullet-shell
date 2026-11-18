@@ -40,6 +40,7 @@ Chrome is expected at `C:/Program Files/Google/Chrome/Application/chrome.exe`. S
 | `orbtest` | The build orb in the pause menu |
 | `rotatetest` | The "turn your phone" screen |
 | `devtest` | The developer shotgun switch (`?dev`) |
+| `tiptest` | Explanations: on cards, on the power, and on hover (it also runs `tipcards` at phone size) |
 | `abilitytest` | The power button; run with `TOUCH=1` for the phone layout |
 | `tutfixtest` | Orientation's endings, sounds and temperament tells |
 | `traitstest` | What each trait does |

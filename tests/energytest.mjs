@@ -32,7 +32,7 @@ await evaluate(`(() => { const s = ${G}; s.stats.leech = 1; s.spawnEnemy(); cons
 check('siphon: a kill restores 1', (await hp()) === 57, await hp());
 check('the siphon card exists', await evaluate(`import('/src/upgrades.ts').then(m => { let found = false; for (let i = 0; i < 30 && !found; i++) found = m.rollUpgrades(50, m.baseStats()).some(u => u.name === 'Siphon'); return found; })`));
 check('motes drop on about 7% of kills', await evaluate(`(() => { const s = ${G}; let n = 0; const real = [0.01, 0.5, 0.069, 0.071]; for (const r of real) { Math.random = () => r; s.spawnEnemy(); const e = s.enemies.getChildren().find(o => o.active); const before = s.motes.getChildren().filter(m => m.active).length; e.setData('hp', 1); s.strike(e, 1); if (s.motes.getChildren().filter(m => m.active).length > before) n++; } return n; })()`) === 2);
-await evaluate(`location.reload()`); await sleep(4000);
+await evaluate(`location.reload()`); await sleep(4000); await t.ready();
 
 // --- The red power: a shockwave that throws everything close off you.
 await evaluate(`(() => { const s = ${G}; s.traits = { hard: 0, calm: 0, rage: 3 }; s.lastTrait = 'rage'; s.endTutorial('absorbed'); s.spawnTimer = 1e9; s.fireCooldown = 1e9; s.mode = 'hell'; s.stats.maxHp = s.hp = 1e9;

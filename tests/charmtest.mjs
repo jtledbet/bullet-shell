@@ -4,6 +4,9 @@ const { evaluate, shot, check, sleep, G, U, menuTexts } = t;
 // A calm core in the run, with four enemies close by and nothing else going on.
 const setup = (mode) => evaluate(`(() => { const s = ${G}; s.traits = { hard: 0, calm: 3, rage: 0 }; s.lastTrait = 'calm'; s.endTutorial('${mode === 'hell' ? 'killed' : 'absorbed'}'); s.traits = { hard: 0, calm: 3, rage: 0 }; s.lastTrait = 'calm';
   s.spawnTimer = 1e9; s.fireCooldown = 1e9; s.abilityCooldown = 0; s.hp = 60;
+  // Freed enemies can wear the core down while a charm runs out. On a fresh profile that would offer
+  // the second wind and freeze play partway through, so count it as already used.
+  s.rescued = true;
   for (let i = 0; i < 4; i++) s.spawnEnemy();
   s.enemies.getChildren().filter(e => e.active).forEach((e, i) => { e.setPosition(s.player.x + Math.cos(i * 1.6) * 130, s.player.y + Math.sin(i * 1.6) * 130); e.setData('hp', 20); e.setData('speed', 70); e.setData('tag', i); });
   return true; })()`);
@@ -60,7 +63,7 @@ const hpBefore = (await me()).hp;
 await evaluate(`(() => { const s = ${G}; s.traits.calm = 0; s.hp = 50; })()`);
 const hpNow = (await me()).hp;
 await evaluate(`(() => { const s = ${G}; const e = s.enemies.getChildren().find(o => o.active); s.invuln = 0; s.phaseLeft = 0; e.setPosition(s.player.x + 4, s.player.y); })()`); await sleep(250);
-check('and then touching one hurts again', (await me()).hp < hpNow, { hpNow, now: (await me()).hp });
+check('and then touching one hurts again', (await me()).hp < hpNow, { hpNow, now: (await me()).hp, why: await evaluate(`(() => { const s = ${G}; const e = s.enemies.getChildren().find(o => o.active); return { frozen: s.frozen, invuln: +s.invuln.toFixed(2), phase: s.phaseLeft, shield: s.shield, levels: s.pendingLevels, xp: s.xp, menu: (${U}.menu?.list ?? []).filter(o => o.type === 'Text').map(o => o.text).slice(0, 3), paused: s.paused, rescued: s.rescued, maxHp: s.stats.maxHp, charmed: !!e?.getData('charmed'), gap: e ? Math.round(Math.hypot(e.x - s.player.x, e.y - s.player.y)) : null }; })()`) });
 
 // Hell path wording.
 await evaluate(`${G}.scene.restart({})`); await sleep(1300);

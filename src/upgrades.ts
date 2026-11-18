@@ -43,46 +43,93 @@ export interface UpgradeContext {
 
 export interface Upgrade {
   name: string;
+  /** What it does, at a glance. */
   desc: string;
+  /** What it is, in plain words, for someone who has never seen it. Shown under the description. */
+  tip: string;
   apply(stats: Stats, ctx: UpgradeContext): void;
   /** Offered only when this returns true (default: always). */
   available?(stats: Stats): boolean;
 }
 
 export const UPGRADES: Upgrade[] = [
-  { name: 'Quick Trigger', desc: '+25% fire rate', apply: (s) => (s.fireRate *= 1.25) },
-  { name: 'Heavy Rounds', desc: '+50% damage', apply: (s) => (s.damage *= 1.5) },
-  { name: 'Split Shot', desc: '+1 projectile', apply: (s) => (s.multishot += 1) },
-  { name: 'Piercing', desc: 'Shots pass through +1 enemy', apply: (s) => (s.pierce += 1) },
-  { name: 'Fleet of Foot', desc: '+12% move speed', apply: (s) => (s.speed *= 1.12) },
+  {
+    name: 'Quick Trigger',
+    desc: '+25% fire rate',
+    tip: 'Your bolts come faster. Each one still costs a sliver of your own energy, so you spend yourself faster too.',
+    apply: (s) => (s.fireRate *= 1.25),
+  },
+  {
+    name: 'Heavy Rounds',
+    desc: '+50% damage',
+    tip: 'More of you goes into every shot. Bolts, sparks, flares and your blast all hit harder.',
+    apply: (s) => (s.damage *= 1.5),
+  },
+  {
+    name: 'Split Shot',
+    desc: '+1 projectile',
+    tip: 'One more bolt in every volley, fanned out beside the others. The volley costs you no more than before.',
+    apply: (s) => (s.multishot += 1),
+  },
+  {
+    name: 'Piercing',
+    desc: 'Shots pass through +1 enemy',
+    tip: 'A bolt keeps going through the first enemy it hits and strikes the one behind it.',
+    apply: (s) => (s.pierce += 1),
+  },
+  {
+    name: 'Fleet of Foot',
+    desc: '+12% move speed',
+    tip: 'You move faster. Getting away is always allowed.',
+    apply: (s) => (s.speed *= 1.12),
+  },
   {
     name: 'Plating',
     desc: '+20 max HP and heal 20',
+    tip: 'You can hold more energy, and some comes back at once. Remember that your energy is also what you fire with.',
     apply: (s, ctx) => {
       s.maxHp += 20;
       ctx.heal(20);
     },
   },
-  { name: 'Magnet', desc: '+40% pickup radius', apply: (s) => (s.magnet *= 1.4) },
+  {
+    name: 'Magnet',
+    desc: '+40% pickup radius',
+    tip: 'Gems and motes of energy fly to you from farther away, so you can stay out of the crowd.',
+    apply: (s) => (s.magnet *= 1.4),
+  },
   {
     name: 'Long Barrel',
     desc: '+20% range and shot speed',
+    tip: 'Bolts fly faster and reach farther, so you start hitting enemies sooner.',
     apply: (s) => {
       s.range *= 1.2;
       s.bulletSpeed *= 1.2;
     },
   },
-  { name: 'Field Medic', desc: 'Heal 40 HP', apply: (_s, ctx) => ctx.heal(40) },
-  { name: 'Siphon', desc: 'Each kill restores 1 HP', apply: (s) => (s.leech += 1) },
+  {
+    name: 'Field Medic',
+    desc: 'Heal 40 HP',
+    tip: 'A large part of your energy back, right now. It does nothing else.',
+    apply: (_s, ctx) => ctx.heal(40),
+  },
+  {
+    name: 'Siphon',
+    desc: 'Each kill restores 1 HP',
+    tip: 'Whatever you destroy gives a little of itself back to you. It adds up fast in a crowd.',
+    apply: (s) => (s.leech += 1),
+  },
   {
     name: 'Flare',
-    desc: 'New weapon: lobs a flare that bursts among enemies',
+    desc: 'New weapon: a bursting flare',
+    tip: 'A slow, heavy knot of your energy, lobbed at your target every few seconds. It bursts on the first enemy it meets and throws back everything nearby.',
     apply: (s) => (s.flareEvery = 3.5),
     available: (s) => s.flareEvery === 0,
   },
   {
     name: 'Brighter Flares',
     desc: 'Flares: +40% blast, and 15% sooner',
+    tip: 'Each flare bursts harder and wider, and you lob them more often.',
     apply: (s) => {
       s.flarePower *= 1.4;
       s.flareEvery *= 0.85;
@@ -91,13 +138,15 @@ export const UPGRADES: Upgrade[] = [
   },
   {
     name: 'Shotgun',
-    desc: 'New weapon: a close-range blast of 5 pellets that knocks enemies back',
+    desc: 'New weapon: a close blast of 5 sparks',
+    tip: 'When enemies get close, you throw a fan of sparks at them. It fires on its own and shoves back whatever it hits.',
     apply: (s) => (s.shotgunPellets = 5),
     available: (s) => s.shotgunPellets === 0,
   },
   {
     name: 'Buckshot',
-    desc: 'Shotgun: +2 pellets and +20% fire rate',
+    desc: 'Shotgun: +2 sparks and +20% fire rate',
+    tip: 'A wider, busier blast. More sparks means more of the crowd pushed off you.',
     apply: (s) => {
       s.shotgunPellets += 2;
       s.shotgunRate *= 1.2;

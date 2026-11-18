@@ -20,10 +20,10 @@ const blasts = await evaluate(`${G}.blastId - window.__b0`);
 check('about 3 blasts a second', blasts >= 7 && blasts <= 10, blasts);
 await shot('dev-blast.png');
 // Remembered: a fresh run starts with it, and so does a reload.
-await evaluate(`${G}.scene.restart({})`); await sleep(1200);
+await evaluate(`(() => { const s = ${G}; s.events.off('update', window.__hold); s.scene.restart({}); })()`); await sleep(1200);
 check('the next run starts with it', (await evaluate(`${G}.stats.shotgunPellets`)) === 6);
-await evaluate(`location.assign('http://127.0.0.1:5173/?fullres')`); await sleep(4000);
+await evaluate(`location.assign('http://127.0.0.1:5173/?fullres')`); await sleep(4000); await t.ready();
 check('and it is remembered on this device', (await evaluate(`${G}.stats.shotgunPellets`)) === 6);
-await evaluate(`location.assign('http://127.0.0.1:5173/?fullres&dev=off')`); await sleep(4000);
+await evaluate(`location.assign('http://127.0.0.1:5173/?fullres&dev=off')`); await sleep(4000); await t.ready();
 check('?dev=off puts everything back', (await evaluate(`${G}.stats.shotgunPellets`)) === 0);
 t.done();
