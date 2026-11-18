@@ -51,6 +51,8 @@ const KNOCKBACK_SPEED = 260;
 const TUTORIAL_DISTANCE = 260;
 /** `?tutorial` in the URL: a tutorial-only sandbox. Each kill starts a fresh tutorial instead of the game. */
 const TUTORIAL_ONLY = new URLSearchParams(window.location.search).has('tutorial');
+/** `?labels` in the URL (or any dev build): name plates showing each seed's temperament. */
+const SHOW_LABELS = import.meta.env.DEV || new URLSearchParams(window.location.search).has('labels');
 /** Sandbox: pause between the kill and the next tutorial (ms). */
 const TUTORIAL_REPEAT_MS = 1200;
 /** Skeptical seeds flee inside this radius, otherwise wander, drifting back past the leash. */
@@ -364,9 +366,9 @@ export class GameScene extends Phaser.Scene {
     this.grid.setPosition(snap(v.centerX), snap(v.centerY));
   }
 
-  /** Dev only: keeps the temperament label over the tutorial enemy. */
+  /** Dev builds or `?labels`: keeps a temperament label over each tutorial seed. */
   private updateMoodLabel() {
-    if (!import.meta.env.DEV) return;
+    if (!SHOW_LABELS) return;
     const seeds = this.tutorial ? (this.enemies.getChildren().filter((o) => o.active) as Sprite[]) : [];
     while (this.moodLabels.length < seeds.length) {
       const style = { fontFamily: 'system-ui, sans-serif', fontSize: '9px', color: '#94a3b8', resolution: pixelRatio() * 2 };
