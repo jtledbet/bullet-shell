@@ -21,8 +21,19 @@ const START = 1200;
 const GRID_TILE = 64;
 const GRID_SIZE = 2048;
 const GRID_COLOUR = 0x1e293b;
-/** The backdrop: black during orientation, this once the run begins. */
+/** Orientation happens in a measured room: this colour, ruled with the grid. The run is out in open space, black, with stars. */
 const FIELD_COLOUR = 0x0b1222;
+/**
+ * The starfield: a few layers of distant points. Each slides past at a fraction of your own
+ * movement (the farther, the slower), which is what shows you are moving at all. The pattern
+ * repeats every STAR_SPAN world px, wider than the view ever gets.
+ */
+const STAR_SPAN = 1600;
+const STAR_LAYERS = [
+  { drift: 0.04, count: 110, size: 0.9, colour: 0x8ea2c8, alpha: 0.55 },
+  { drift: 0.1, count: 60, size: 1.2, colour: 0xc7d2fe, alpha: 0.75 },
+  { drift: 0.2, count: 26, size: 1.7, colour: 0xffffff, alpha: 0.95 },
+];
 /** The first level-up comes quickly; after that the curve takes over. */
 const FIRST_LEVEL_XP = 3;
 /**
@@ -378,6 +389,10 @@ export class GameScene extends Phaser.Scene {
   private shield = 0;
   private shieldFx!: Phaser.GameObjects.Graphics;
   private grid!: Phaser.GameObjects.Graphics;
+  private stars!: Phaser.GameObjects.Graphics;
+  /** Where each layer's stars sit within the repeating span, and how strongly the field shows (0 in orientation). */
+  private starSpots: { x: number; y: number }[][] = [];
+  private starAlpha = 0;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private readonly aimVec = new Phaser.Math.Vector2();
   private readonly moveVec = new Phaser.Math.Vector2();
@@ -495,10 +510,13 @@ export class GameScene extends Phaser.Scene {
     this.physics.resume();
     this.time.paused = false;
 
-    this.grid = this.add.graphics().setVisible(!this.tutorial);
+    this.stars = this.add.graphics().setDepth(-1);
+    this.starSpots = STAR_LAYERS.map((l) => Array.from({ length: l.count }, () => ({ x: Math.random() * STAR_SPAN, y: Math.random() * STAR_SPAN })));
+    this.starAlpha = this.tutorial ? 0 : 1;
+    this.grid = this.add.graphics().setVisible(this.tutorial);
     this.grid.lineStyle(1, GRID_COLOUR);
     for (let p = 0; p <= GRID_SIZE; p += GRID_TILE) this.grid.lineBetween(p, 0, p, GRID_SIZE).lineBetween(0, p, GRID_SIZE, p);
-    this.setBackdrop(this.tutorial ? 0x000000 : FIELD_COLOUR);
+    this.setBackdrop(this.tutorial ? FIELD_COLOUR : 0x000000);
     this.powerFx = this.add.graphics().setDepth(12);
     this.shieldFx = this.add.graphics().setDepth(12);
     this.rescued = false;
@@ -574,6 +592,7 @@ export class GameScene extends Phaser.Scene {
     this.keys = kb.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT') as Record<string, Phaser.Input.Keyboard.Key>;
     kb.on('keydown-ESC', this.togglePause, this);
     kb.on('keydown-P', this.togglePause, this);
+    kb.on('keydown-SPACE', this.togglePause, this);
     kb.on('keydown-M', () => this.ui.toggleSound());
     kb.on('keydown-E', () => this.useAbility());
     // Esc leaves fullscreen without the page ever seeing the key, so pause when fullscreen ends.
@@ -726,7 +745,22 @@ export class GameScene extends Phaser.Scene {
     this.gridKick = Math.max(0, this.gridKick - dt);
     // The blast's jolt: pushed along the blast, easing back to rest.
     const k = BLAST_KICK_PX * (this.gridKick / (BLAST_KICK_MS / 1000)) ** 2;
-    this.grid.setPosition(snap(v.centerX) + Math.cos(this.blastAngle) * k, snap(v.centerY) + Math.sin(this.blastAngle) * k);
+    const kx = Math.cos(this.blastAngle) * k;
+    const ky = Math.sin(this.blastAngle) * k;
+    this.grid.setPosition(snap(v.centerX) + kx, snap(v.centerY) + ky);
+
+    // The stars: each layer wraps around the view, sliding by a fraction of the camera's travel. A blast jolts them too.
+    const g = this.stars.clear();
+    if (this.starAlpha <= 0) return;
+    const wrap = (n: number) => ((n % STAR_SPAN) + STAR_SPAN) % STAR_SPAN;
+    STAR_LAYERS.forEach((layer, i) => {
+      g.fillStyle(layer.colour, layer.alpha * this.starAlpha);
+      for (const s of this.starSpots[i]) {
+        const x = v.centerX - STAR_SPAN / 2 + wrap(s.x - v.centerX * layer.drift) + kx;
+        const y = v.centerY - STAR_SPAN / 2 + wrap(s.y - v.centerY * layer.drift) + ky;
+        if (x > v.x - 2 && x < v.right + 2 && y > v.y - 2 && y < v.bottom + 2) g.fillRect(x, y, layer.size, layer.size);
+      }
+    });
   }
 
   /**
@@ -1367,9 +1401,18 @@ export class GameScene extends Phaser.Scene {
     this.tutorial = false;
     this.mode = hell ? 'hell' : 'heaven';
     this.stats.damage *= 1 + RAGE_DAMAGE * this.trait('rage');
-    this.grid.setVisible(true).setAlpha(0);
-    this.tweens.add({ targets: this.grid, alpha: 1, duration: 1200 });
-    this.tweens.addCounter({ from: 0, to: 1, duration: 1200, onUpdate: (tw) => this.setBackdrop(lerpColor(0x000000, FIELD_COLOUR, tw.getValue() ?? 1)) });
+    // Out of the measured room and into open space: the grid fades, the dark comes in, the stars come out.
+    this.tweens.add({ targets: this.grid, alpha: 0, duration: 1200, onComplete: () => this.grid.setVisible(false) });
+    this.tweens.addCounter({
+      from: 0,
+      to: 1,
+      duration: 1200,
+      onUpdate: (tw) => {
+        const k = tw.getValue() ?? 1;
+        this.setBackdrop(lerpColor(FIELD_COLOUR, 0x000000, k));
+        this.starAlpha = k;
+      },
+    });
     this.spawnTimer = 1.5;
   }
 
