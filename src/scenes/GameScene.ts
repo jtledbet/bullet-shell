@@ -3,7 +3,7 @@ import type { UIScene } from './UIScene';
 import { sfx } from '../audio';
 import { pixelRatio, TEX_SCALE } from '../display';
 import { setDanger, setHum, setPauseMusic } from '../music';
-import { recordRun } from '../storage';
+import { labelsOn, recordRun, setLabels } from '../storage';
 import { baseStats, rollUpgrades, type Stats } from '../upgrades';
 
 type Sprite = Phaser.Physics.Arcade.Sprite;
@@ -68,8 +68,8 @@ const HIT_STOP_MS = 50;
 const TUTORIAL_DISTANCE = 260;
 /** `?tutorial` in the URL: a tutorial-only sandbox. Each kill starts a fresh tutorial instead of the game. */
 const TUTORIAL_ONLY = new URLSearchParams(window.location.search).has('tutorial');
-/** `?labels` in the URL (or any dev build): name plates showing each seed's temperament. */
-const SHOW_LABELS = import.meta.env.DEV || new URLSearchParams(window.location.search).has('labels');
+// `?labels` in the URL turns the seeds' name plates on (and remembers it, like the pause-menu toggle).
+if (new URLSearchParams(window.location.search).has('labels')) setLabels(true);
 /** Sandbox: pause between the kill and the next tutorial (ms). */
 const TUTORIAL_REPEAT_MS = 1200;
 /** Skeptical seeds flee inside this radius, otherwise wander, drifting back past the leash. */
@@ -399,8 +399,7 @@ export class GameScene extends Phaser.Scene {
 
   /** Dev builds or `?labels`: keeps a temperament label over each tutorial seed. */
   private updateMoodLabel() {
-    if (!SHOW_LABELS) return;
-    const seeds = this.tutorial ? (this.enemies.getChildren().filter((o) => o.active) as Sprite[]) : [];
+    const seeds = this.tutorial && labelsOn() ? (this.enemies.getChildren().filter((o) => o.active) as Sprite[]) : [];
     while (this.moodLabels.length < seeds.length) {
       const style = { fontFamily: 'system-ui, sans-serif', fontSize: '9px', color: '#94a3b8', resolution: pixelRatio() * 2 };
       this.moodLabels.push(this.add.text(0, 0, '', style).setOrigin(0.5, 1).setDepth(20));

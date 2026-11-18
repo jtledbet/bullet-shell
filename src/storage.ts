@@ -13,6 +13,8 @@ export interface BestRun {
 
 interface Save {
   muted: boolean;
+  /** Name plates over the tutorial seeds. */
+  labels: boolean;
   best: BestRun | null;
 }
 
@@ -25,9 +27,9 @@ function validBest(b: unknown): BestRun | null {
 function read(): Save {
   try {
     const parsed = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Save> | null;
-    return { muted: parsed?.muted === true, best: validBest(parsed?.best) };
+    return { muted: parsed?.muted === true, labels: parsed?.labels === true, best: validBest(parsed?.best) };
   } catch {
-    return { muted: false, best: null };
+    return { muted: false, labels: false, best: null };
   }
 }
 
@@ -45,6 +47,13 @@ export const isMuted = () => save.muted;
 
 export function setMuted(muted: boolean) {
   save.muted = muted;
+  write();
+}
+
+export const labelsOn = () => save.labels;
+
+export function setLabels(on: boolean) {
+  save.labels = on;
   write();
 }
 

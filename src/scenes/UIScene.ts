@@ -3,7 +3,7 @@ import { TwinStick } from '../input/TwinStick';
 import { sfx } from '../audio';
 import { pixelRatio } from '../display';
 import { refreshMusic } from '../music';
-import { bestRun, isMuted, setMuted } from '../storage';
+import { bestRun, isMuted, labelsOn, setLabels, setMuted } from '../storage';
 import type { HudState } from './GameScene';
 import type { Upgrade } from '../upgrades';
 
@@ -199,6 +199,7 @@ export class UIScene extends Phaser.Scene {
         ...this.menuButton('Restart', h * 0.68, onRestart, { dx: -PAIR_OFFSET }),
         ...this.exitButton(h * 0.68),
         ...this.soundButton(),
+        ...this.labelsButton(),
       ];
     });
   }
@@ -219,6 +220,22 @@ export class UIScene extends Phaser.Scene {
     const label = this.label(x, y, isMuted() ? 'Sound: off' : 'Sound: on', { fontSize: '16px', color: '#cbd5e1' }).setOrigin(0.5);
     this.makeButton(btn, () => this.toggleSound(), true);
     return [btn, label];
+  }
+
+  /** Left of the sound button: name plates over the tutorial seeds, on or off. Saved. */
+  private labelsButton() {
+    const x = this.w - PAD - 60 - 130;
+    const y = PAD + 14;
+    const btn = this.add.rectangle(x, y, 120, 44, 0x1e293b).setStrokeStyle(2, 0x475569);
+    const label = this.label(x, y, labelsOn() ? 'Labels: on' : 'Labels: off', { fontSize: '16px', color: '#cbd5e1' }).setOrigin(0.5);
+    this.makeButton(btn, () => this.toggleLabels(), true);
+    return [btn, label];
+  }
+
+  toggleLabels() {
+    setLabels(!labelsOn());
+    sfx.click();
+    if (this.menu) this.buildMenu();
   }
 
   /** Dev builds only: a small line at the top showing what the tutorial noticed. */
