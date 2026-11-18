@@ -15,15 +15,41 @@
       #game { position: fixed; inset: 0; }
       #rotate {
         display: none; position: fixed; inset: 0; z-index: 10;
-        align-items: center; justify-content: center; text-align: center;
-        background: #020617; color: #e2e8f0; font: 600 20px/1.4 system-ui, sans-serif; padding: 24px;
+        flex-direction: column; align-items: center; justify-content: center; gap: 22px; text-align: center;
+        background: #020617; color: #e2e8f0; font: 500 18px/1.4 system-ui, sans-serif; padding: 24px;
       }
       @media (orientation: portrait) and (pointer: coarse) { #rotate { display: flex; } }
+      #rotate .phone {
+        width: 34px; height: 58px; border: 2px solid #94a3b8; border-radius: 7px;
+        animation: tip 3.2s ease-in-out infinite;
+      }
+      @keyframes tip { 0%, 25% { transform: rotate(0); } 55%, 85% { transform: rotate(-90deg); } 100% { transform: rotate(0); } }
+      #rotate p { margin: 0; max-width: 280px; }
+      #rotate .quiet { color: #94a3b8; font-weight: 400; font-size: 15px; }
+      #rotate .row { display: flex; gap: 14px; margin-top: 6px; }
+      #rotate a, #rotate button {
+        display: flex; align-items: center; justify-content: center; box-sizing: border-box;
+        height: 44px; min-width: 44px; padding: 0 16px; border: 2px solid #334155; border-radius: 4px;
+        background: #1e293b; color: #cbd5e1; font: 500 16px system-ui, sans-serif; text-decoration: none;
+      }
+      #rotate button { padding: 0; width: 44px; }
     </style>
-    <script type="module" crossorigin src="./assets/index-BedzRWzr.js"></script>
+    <script type="module" crossorigin src="./assets/index-BjpoC7Gh.js"></script>
   </head>
   <body>
     <div id="game"></div>
-    <div id="rotate">turn your phone sideways to play</div>
+    <div id="rotate">
+      <div class="phone" aria-hidden="true"></div>
+      <p>bullet shell plays sideways</p>
+      <p class="quiet">turn your phone, or tap the square to go fullscreen</p>
+      <div class="row">
+        <a href="https://ledsec.dev/games/">back</a>
+        <button id="rotate-full" type="button" aria-label="fullscreen">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" stroke="#e2e8f0" stroke-width="2.5" aria-hidden="true">
+            <path d="M2 8V2h6M14 2h6v6M20 14v6h-6M8 20H2v-6" />
+          </svg>
+        </button>
+      </div>
+    </div>
   </body>
 </html>
