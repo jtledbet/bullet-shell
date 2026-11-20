@@ -68,21 +68,30 @@ export function setLabels(on: boolean) {
   write();
 }
 
-export const devOn = () => save.dev;
+/**
+ * Developer extras last only for a visit whose address has `?dev`, and are never remembered, so
+ * ordinary play never shows them. (Their switches' settings are kept for the next such visit.)
+ */
+let devVisit = false;
+export const devOn = () => devVisit;
 
 export function setDev(on: boolean) {
-  save.dev = on;
-  write();
+  devVisit = on;
+  // Older builds remembered dev mode itself; forget that.
+  if (save.dev) {
+    save.dev = false;
+    write();
+  }
 }
 
-export const devShotgunOn = () => save.dev && save.devShotgun;
+export const devShotgunOn = () => devVisit && save.devShotgun;
 
 export function setDevShotgun(on: boolean) {
   save.devShotgun = on;
   write();
 }
 
-export const devFlareOn = () => save.dev && save.devFlare;
+export const devFlareOn = () => devVisit && save.devFlare;
 
 export function setDevFlare(on: boolean) {
   save.devFlare = on;

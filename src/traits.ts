@@ -16,9 +16,9 @@ export const CORE_COLOURS: Record<Trait, number> = { hard: 0x8492a8, calm: 0x7cc
 
 /** What each power does, in plain words. Shown when the power first appears, and on hover. */
 export const POWER_TIPS: Record<Trait, string> = {
-  hard: 'Brace: for a moment, hits do only a fifth of their harm.',
-  calm: 'Phase: slip out of reach. Shots pass through you, and enemies nearby are charmed. Walk into a charmed one to take it in.',
-  rage: 'Burst: everything close to you is hit hard and hurled away.',
+  hard: 'Brace: for a moment, hits barely hurt, and anything that touches you is knocked away hard. It grows with you.',
+  calm: 'Phase: slip out of reach. Shots pass through you, and enemies nearby are charmed. Walk into a charmed one to take it in. It grows with you.',
+  rage: 'Burst: everything close to you is hit hard and hurled away. It grows with you.',
 };
 
 /** The power each trait gives (the button, or right-click). Shown as a caption when labels are on. */

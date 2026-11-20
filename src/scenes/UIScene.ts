@@ -126,7 +126,7 @@ export class UIScene extends Phaser.Scene {
       const shown = (text: string) => () => (this.hudShown && !this.menu ? text : '');
       this.hpZone = this.tip(this.add.zone(PAD, PAD - 6, 260, 24).setOrigin(0).setInteractive(), shown('Your energy. Hits take it, and so does every shot you fire. Firing alone can never take the last of it.'));
       this.xpZone = this.tip(this.add.zone(0, 0, 100, 10).setOrigin(0).setInteractive(), shown('Gems fill this. When it is full you gain a level and choose a card.'));
-      this.mapZone = this.tip(this.add.zone(-999, -999, MAP_R * 2, MAP_R * 2).setInteractive(), shown('A map of what is around you. Gems are green, motes of energy are white, and the crowd is red.'));
+      this.mapZone = this.tip(this.add.zone(-999, -999, MAP_R * 2, MAP_R * 2).setInteractive(), shown('A map of what is around you. Green dots are gems, for leveling up. White dots are energy, which heals you. Red dots are enemies.'));
     }
 
     // The ability button: tap (or right-click anywhere on desktop). Hidden until the core has a trait.

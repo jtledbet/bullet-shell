@@ -181,10 +181,10 @@ const TUTORIAL_DISTANCE = 260;
 const TUTORIAL_ONLY = new URLSearchParams(window.location.search).has('tutorial');
 // `?labels` in the URL turns the seeds' name plates on (and remembers it, like the pause-menu toggle).
 if (new URLSearchParams(window.location.search).has('labels')) setLabels(true);
-// `?dev` in the URL turns on developer extras on this device and remembers it; `?dev=off` turns them off again.
+// `?dev` in the URL turns on developer extras for that visit only.
 {
   const query = new URLSearchParams(window.location.search);
-  if (query.has('dev')) setDev(query.get('dev') !== 'off');
+  setDev(query.has('dev') && query.get('dev') !== 'off');
 }
 /**
  * Developer extra, switched from the pause menu: an auto-loading shotgun from the first second.
@@ -351,6 +351,29 @@ const ENERGY_MIN_SIZE = 0.8;
 const MOTE_CHANCE = 0.07;
 const MOTE_HEAL = 6;
 const ABILITY_COOLDOWN = 6;
+/**
+ * The powers are the core's own, so they grow with it. Each level past the first shortens the
+ * cooldown by this factor, down to a floor, and each power grows as below, up to its cap.
+ */
+const ABILITY_COOLDOWN_SHRINK = 0.97;
+const ABILITY_COOLDOWN_MIN = 3;
+const BURST_RADIUS_PER_LEVEL = 4;
+const BURST_RADIUS_MAX = 240;
+/** Burst's damage gains this share of itself per level. */
+const BURST_DAMAGE_PER_LEVEL = 0.1;
+const BRACE_SECONDS_PER_LEVEL = 0.05;
+const BRACE_SECONDS_MAX = 3;
+/** What gets through a brace shrinks by this factor per level, down to the floor. */
+const BRACE_DAMAGE_SHRINK = 0.98;
+const BRACE_DAMAGE_MIN = 0.1;
+/** While braced, anything that touches you is knocked away and takes this many times your shot damage. */
+const BRACE_SHOVE_DAMAGE = 4;
+/** A shoved enemy can't be shoved again for this long, so one touch is one knock. */
+const BRACE_SHOVE_GAP = 0.3;
+const PHASE_SECONDS_PER_LEVEL = 0.03;
+const PHASE_SECONDS_MAX = 2.2;
+const CHARM_RADIUS_PER_LEVEL = 4;
+const CHARM_RADIUS_MAX = 400;
 
 /** What the tutorial noticed about how it was played. */
 interface TutorialNotes {
@@ -508,6 +531,8 @@ export class GameScene extends Phaser.Scene {
   private abilityCooldown = 0;
   private phaseLeft = 0;
   private braceLeft = 0;
+  /** The cooldown the power started on when last used, for the button's charge. */
+  private abilityCooldownFull = ABILITY_COOLDOWN;
   /** Last ability used, for test scripts and the dev readout. */
   lastAbility: 'phase' | 'brace' | 'burst' | null = null;
   private hardEdge!: Phaser.GameObjects.Graphics;
@@ -1315,11 +1340,11 @@ export class GameScene extends Phaser.Scene {
     for (const obj of this.enemies.getChildren()) {
       const e = obj as Sprite;
       if (!e.active) continue;
-      if (Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y) < CHARM_RADIUS) {
+      if (Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y) < this.charmRadius()) {
         e.setData({ lost: CHARM_SECONDS + Phaser.Math.FloatBetween(0, 0.6), charmed: true, absorb: 0, caught: 0, spreads: CHARM_SPREADS });
         this.think(e, THOUGHTS.baffled, { critical: true });
       } else {
-        e.setData({ lost: PHASE_SECONDS + Phaser.Math.FloatBetween(1, 2.2), charmed: false });
+        e.setData({ lost: this.phaseSeconds() + Phaser.Math.FloatBetween(1, 2.2), charmed: false });
         this.physics.velocityFromRotation(Math.random() * Math.PI * 2, (e.getData('speed') as number) * 0.4, (e.body as Phaser.Physics.Arcade.Body).velocity);
       }
     }
@@ -1667,19 +1692,21 @@ export class GameScene extends Phaser.Scene {
    */
   private burst() {
     const p = this.player;
+    const radius = this.burstRadius();
+    const damage = this.shotDamage() * BURST_DAMAGE * (1 + BURST_DAMAGE_PER_LEVEL * (this.level - 1));
     for (const obj of this.enemies.getChildren()) {
       const e = obj as Sprite;
       if (!e.active) continue;
       const d = Phaser.Math.Distance.Between(p.x, p.y, e.x, e.y);
-      if (d > BURST_RADIUS) continue;
-      if (this.strike(e, this.shotDamage() * BURST_DAMAGE)) continue;
+      if (d > radius) continue;
+      if (this.strike(e, damage)) continue;
       const away = Phaser.Math.Angle.Between(p.x, p.y, e.x, e.y);
-      this.physics.velocityFromRotation(away, Phaser.Math.Linear(KNOCKBACK_MAX, KNOCKBACK_NEAR, d / BURST_RADIUS), (e.body as Phaser.Physics.Arcade.Body).velocity);
+      this.physics.velocityFromRotation(away, Phaser.Math.Linear(KNOCKBACK_MAX, KNOCKBACK_NEAR, d / radius), (e.body as Phaser.Physics.Arcade.Body).velocity);
       e.setData('knock', KNOCKBACK_SECONDS * 1.6);
     }
     for (const obj of this.enemyBullets.getChildren()) {
       const b = obj as Sprite;
-      if (b.active && Phaser.Math.Distance.Between(p.x, p.y, b.x, b.y) <= BURST_RADIUS) b.disableBody(true, true);
+      if (b.active && Phaser.Math.Distance.Between(p.x, p.y, b.x, b.y) <= radius) b.disableBody(true, true);
     }
     // The background jolts, as with a shotgun blast.
     this.gridKick = BLAST_KICK_MS / 1000;
@@ -1694,9 +1721,9 @@ export class GameScene extends Phaser.Scene {
         this.powerFx
           .clear()
           .fillStyle(colour, 0.3 * (1 - k))
-          .fillCircle(p.x, p.y, BURST_RADIUS * k)
+          .fillCircle(p.x, p.y, radius * k)
           .lineStyle(5 * (1 - k) + 1, colour, 0.95 * (1 - k))
-          .strokeCircle(p.x, p.y, BURST_RADIUS * k);
+          .strokeCircle(p.x, p.y, radius * k);
       },
       onComplete: () => this.powerFx.clear(),
     });
@@ -1729,8 +1756,9 @@ export class GameScene extends Phaser.Scene {
   /** In the tutorial a sprite inside you is slowly absorbed; afterwards, contact hurts. */
   private onPlayerTouch(e: Sprite) {
     if (!this.tutorial) {
-      if (e.getData('charmed')) this.takeIn(e);
-      else this.onPlayerHit();
+      if (e.getData('charmed')) return this.takeIn(e);
+      if (this.braceLeft > 0) this.braceShove(e);
+      this.onPlayerHit();
     } else if (e.getData('irritated')) this.bump(e);
     else this.absorb(e);
   }
@@ -1893,7 +1921,7 @@ export class GameScene extends Phaser.Scene {
   /** The strongest trait; ties go to the one gained most recently. None until the core has any. */
   private abilityHud(): HudState['ability'] {
     const trait = this.tutorial ? null : this.strongestTrait();
-    return trait ? { trait, charge: 1 - this.abilityCooldown / ABILITY_COOLDOWN } : null;
+    return trait ? { trait, charge: 1 - this.abilityCooldown / this.abilityCooldownFull } : null;
   }
 
   private strongestTrait(): Trait | null {
@@ -1904,20 +1932,55 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Right-click, after the tutorial: phase (calm), brace (hard) or a ring of shots (rage), then a cooldown. */
+  /** How the powers grow with level. */
+  private grown(perLevel: number) {
+    return perLevel * (this.level - 1);
+  }
+  private cooldownSeconds() {
+    return Math.max(ABILITY_COOLDOWN_MIN, ABILITY_COOLDOWN * Math.pow(ABILITY_COOLDOWN_SHRINK, this.level - 1));
+  }
+  private burstRadius() {
+    return Math.min(BURST_RADIUS_MAX, BURST_RADIUS + this.grown(BURST_RADIUS_PER_LEVEL));
+  }
+  private braceSeconds() {
+    return Math.min(BRACE_SECONDS_MAX, BRACE_SECONDS + this.grown(BRACE_SECONDS_PER_LEVEL));
+  }
+  /** The share of a hit that gets through a brace. */
+  private braceLets() {
+    return Math.max(BRACE_DAMAGE_MIN, BRACE_DAMAGE * Math.pow(BRACE_DAMAGE_SHRINK, this.level - 1));
+  }
+  private phaseSeconds() {
+    return Math.min(PHASE_SECONDS_MAX, PHASE_SECONDS + this.grown(PHASE_SECONDS_PER_LEVEL));
+  }
+  private charmRadius() {
+    return Math.min(CHARM_RADIUS_MAX, CHARM_RADIUS + this.grown(CHARM_RADIUS_PER_LEVEL));
+  }
+
+  /** Braced, the core is a wall: whatever touches it is knocked away hard and takes a knock of damage. */
+  private braceShove(e: Sprite) {
+    if (this.frozen || (e.getData('shoved') ?? -1) > this.elapsed) return;
+    e.setData('shoved', this.elapsed + BRACE_SHOVE_GAP);
+    if (this.strike(e, this.shotDamage() * BRACE_SHOVE_DAMAGE)) return;
+    const away = Phaser.Math.Angle.Between(this.player.x, this.player.y, e.x, e.y);
+    this.physics.velocityFromRotation(away, KNOCKBACK_MAX, (e.body as Phaser.Physics.Arcade.Body).velocity);
+    e.setData('knock', KNOCKBACK_SECONDS * 1.6);
+    sfx.bump();
+  }
+
   private useAbility() {
     if (this.tutorial || this.frozen || this.abilityCooldown > 0) return;
     const t = this.strongestTrait();
     if (!t) return;
-    this.abilityCooldown = ABILITY_COOLDOWN;
+    this.abilityCooldown = this.abilityCooldownFull = this.cooldownSeconds();
     sfx.power(POWER_NAMES[t] as 'brace' | 'phase' | 'burst');
     if (t !== 'rage') this.powerRing(TRAIT_COLOURS[t]);
     if (labelsOn()) this.ui.floatWord(POWER_NAMES[t]);
     if (t === 'calm') {
-      this.phaseLeft = PHASE_SECONDS;
+      this.phaseLeft = this.phaseSeconds();
       this.lastAbility = 'phase';
       this.loseEnemies();
     } else if (t === 'hard') {
-      this.braceLeft = BRACE_SECONDS;
+      this.braceLeft = this.braceSeconds();
       this.lastAbility = 'brace';
     } else {
       this.burst();
@@ -1997,7 +2060,7 @@ export class GameScene extends Phaser.Scene {
     }
     // Hard: hits do less damage, and much less while braced.
     const armor = 1 - HARD_ARMOR * this.trait('hard');
-    this.hp -= this.hitDamage() * armor * (this.braceLeft > 0 ? BRACE_DAMAGE : 1);
+    this.hp -= this.hitDamage() * armor * (this.braceLeft > 0 ? this.braceLets() : 1);
     this.invuln = INVULN_SECONDS;
     this.face.react('hit');
     this.cameras.main.shake(120, 0.006);

@@ -3,7 +3,7 @@ import { open } from './cdp.mjs';
 let t = await open({ out: process.argv[2] + '-a', port: 9349, url: 'http://127.0.0.1:5173/?fullres', dsf: 1 });
 await t.evaluate(`${t.G}.pauseGame()`); await t.sleep(500);
 t.check('without ?dev: no shotgun switch in the pause menu', !(await t.menuTexts()).some((x) => x.startsWith('shotgun')), await t.menuTexts());
-await t.evaluate(`location.assign('http://127.0.0.1:5173/?fullres&dev')`); await t.sleep(4000);
+await t.evaluate(`location.assign('http://127.0.0.1:5173/?fullres&dev')`); await t.sleep(4000); await t.ready();
 const { evaluate, click, check, sleep, G, uiPoint, menuTexts, shot } = t;
 await evaluate(`${G}.pauseGame()`); await sleep(600);
 check('with ?dev: the switch is there, off', (await menuTexts()).includes('shotgun: off'), await menuTexts());
@@ -22,8 +22,14 @@ await shot('dev-blast.png');
 // Remembered: a fresh run starts with it, and so does a reload.
 await evaluate(`(() => { const s = ${G}; s.events.off('update', window.__hold); s.scene.restart({}); })()`); await sleep(1200);
 check('the next run starts with it', (await evaluate(`${G}.stats.shotgunPellets`)) === 6);
+// Dev mode lasts only for a visit with ?dev in its address.
 await evaluate(`location.assign('http://127.0.0.1:5173/?fullres')`); await sleep(4000); await t.ready();
-check('and it is remembered on this device', (await evaluate(`${G}.stats.shotgunPellets`)) === 6);
+check('a visit without ?dev plays without it', (await evaluate(`${G}.stats.shotgunPellets`)) === 0);
+await evaluate(`${G}.pauseGame()`); await sleep(500);
+check('and shows no developer switches', !(await menuTexts()).some((x) => x.startsWith('shotgun') || x.startsWith('flare')), await menuTexts());
+await evaluate(`${G}.resumeGame()`);
+await evaluate(`location.assign('http://127.0.0.1:5173/?fullres&dev')`); await sleep(4000); await t.ready();
+check('the next ?dev visit has it again, switch still on', (await evaluate(`${G}.stats.shotgunPellets`)) === 6);
 await evaluate(`location.assign('http://127.0.0.1:5173/?fullres&dev=off')`); await sleep(4000); await t.ready();
-check('?dev=off puts everything back', (await evaluate(`${G}.stats.shotgunPellets`)) === 0);
+check('?dev=off plays without it', (await evaluate(`${G}.stats.shotgunPellets`)) === 0);
 t.done();
