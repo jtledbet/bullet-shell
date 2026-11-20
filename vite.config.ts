@@ -13,7 +13,13 @@ try {
 
 export default defineConfig({
   base: './',
-  server: { port: 5173 },
+  server: {
+    port: 5173,
+    // The browser checks keep throwaway Chrome profiles in tests/.out. Chrome writes HTML files
+    // there, and without this the dev server would take them for the game's and reload the page
+    // mid-check.
+    watch: { ignored: ['**/tests/.out/**'] },
+  },
   define: {
     __APP_VERSION__: JSON.stringify(version),
     __APP_COMMIT__: JSON.stringify(commit),

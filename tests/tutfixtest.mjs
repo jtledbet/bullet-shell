@@ -109,6 +109,22 @@ await evaluate(`${G}.player.x -= 1500`); await sleep(300);
 st = await state();
 check('running far ends in bullet heaven, +1 calm', !st.tutorial && st.mode === 'heaven' && st.traits.calm === 1 && st.active === 0, st);
 
+// Hold still, and a wary seed creeps in to be taken in.
+await fresh('skeptical', 260);
+const w0 = (await seed()).d;
+await sleep(2500);
+const w1 = (await seed())?.d;
+check('hold still and a wary seed creeps closer', w1 !== undefined && w1 < w0 - 40, { w0, w1 });
+for (let i = 0; i < 60; i++) { st = await state(); if (!st.tutorial) break; await sleep(250); }
+check('and settles in to be taken in: bullet heaven, +1 calm', !st.tutorial && st.mode === 'heaven' && st.traits.calm === 1, st);
+
+// Move while it is close, and it jerks away.
+await fresh('skeptical', 200);
+await sleep(1800);
+const w2 = await evaluate(`new Promise(r => { const s = ${G}; s.player.x -= 6; let top = 0, n = 0;
+  const f = () => { const e = s.enemies.getChildren().find(o => o.active); const v = e.body.velocity; top = Math.max(top, Math.hypot(v.x, v.y)); if (++n < 20) requestAnimationFrame(f); else r({ speed: top, d: Math.round(Math.hypot(e.x - s.player.x, e.y - s.player.y)) }); }; requestAnimationFrame(f); })`);
+check('move while it creeps in and it jerks away', w2.speed > 150, w2);
+
 // Absorbing: calm and angry.
 // Absorbing takes a little over two seconds: wait for it to finish rather than guess.
 await fresh('curious', 0); for (let i = 0; i < 24 && (await evaluate(`${G}.tutorial`)); i++) await sleep(250);

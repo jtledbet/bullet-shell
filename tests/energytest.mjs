@@ -17,7 +17,8 @@ await sleep(3000);
 const spent = await evaluate(`+(window.__f0 - ${G}.hp).toFixed(2)`);
 check('three seconds of auto-fire spends about half a point', spent > 0.3 && spent < 0.8, spent);
 check('at full energy the core is full size', (await size()) > 0.99, await size());
-await evaluate(`(() => { const s = ${G}; s.hp = 15.02; for (let i = 0; i < 50; i++) s.spend(0.06); })()`); await sleep(200);
+// (An angry seed half taken in during orientation swells the core a little; this is about energy alone.)
+await evaluate(`(() => { const s = ${G}; s.setAnger(0); s.hp = 15.02; for (let i = 0; i < 50; i++) s.spend(0.06); })()`); await sleep(200);
 check('firing never takes you below 15%', (await hp()) === 15, await hp());
 check('a drained core is smaller', Math.abs((await size()) - 0.83) < 0.01, await size());
 await shot('drained.png');

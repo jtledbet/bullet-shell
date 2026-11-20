@@ -228,6 +228,14 @@ const CURIOUS_NEAR = 160;
 const FLINCH_SPEED = 260;
 const FLINCH_SECONDS = 0.15;
 const FLINCH_SLACK = 50;
+/**
+ * A wary seed won't come near a core that moves, but it won't stay away from one that holds
+ * still: after this long without moving, it creeps in, stop-start, and settles inside you.
+ */
+const WARY_TRUST_SECONDS = 0.8;
+const WARY_CREEP_SPEED = 75;
+/** Moving less than this in a frame counts as holding still. */
+const STILL_EPSILON = 0.5;
 const TREMBLE_DEG = 4;
 /**
  * Orientation, before the player has ever done anything: gentle nudges at these idle seconds.
@@ -511,6 +519,10 @@ export class GameScene extends Phaser.Scene {
   private absorbing = 0;
   /** Whether the seeds have said "hey" during this idle spell. */
   private heyed = false;
+  /** How long the core has held still, by where it is rather than what is pressed, and where it was last frame. */
+  private stillFor = 0;
+  private lastX = 0;
+  private lastY = 0;
   /** Brood seeds scheduled to pop up but not out yet; the tutorial can't end while any are pending. */
   private pendingSeeds = 0;
   /** Tutorial: seconds standing idle, whether that has irritated the seeds, bumps taken, and the current bump. */
@@ -566,7 +578,7 @@ export class GameScene extends Phaser.Scene {
     this.outcome = resume;
     this.notes = { startMood: 'curious', firstShot: null, shots: 0, shotWhileCalm: false, seconds: 0, killed: 0, absorbed: 0 };
     this.pendingSeeds = 0;
-    this.idleTime = this.nudges = this.bumps = this.bumpLeft = this.bumpGap = 0;
+    this.idleTime = this.nudges = this.bumps = this.bumpLeft = this.bumpGap = this.stillFor = 0;
     this.irritated = false;
     this.traits = resume ? { ...resume.traits } : { hard: 0, calm: 0, rage: 0 };
     this.lastTrait = resume?.lastTrait ?? null;
@@ -997,6 +1009,10 @@ export class GameScene extends Phaser.Scene {
   /** Tutorial: standing idle too long irritates the seeds; running far enough from all of them ends it. */
   private watchTutorial(dt: number) {
     if (!this.tutorial) return;
+    const moved = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.lastX, this.lastY) > STILL_EPSILON;
+    this.lastX = this.player.x;
+    this.lastY = this.player.y;
+    this.stillFor = moved ? 0 : this.stillFor + dt;
     const seeds = this.enemies.getChildren().filter((o) => o.active) as Sprite[];
     if (!seeds.length) return;
     const moving = this.moveVec.lengthSq() > 0.01;
@@ -1005,7 +1021,8 @@ export class GameScene extends Phaser.Scene {
       this.heyed = false;
     }
     this.idleTime = moving ? 0 : this.idleTime + dt;
-    if (!GameScene.acted && this.nudges < NUDGE_SECONDS.length && this.idleTime >= NUDGE_SECONDS[this.nudges]) {
+    const creeping = seeds.some((e) => e.getData('creeping'));
+    if (!GameScene.acted && !creeping && this.nudges < NUDGE_SECONDS.length && this.idleTime >= NUDGE_SECONDS[this.nudges]) {
       this.nudge(this.nudges++, seeds);
     }
     if (this.idleTime >= IDLE_HEY_SECONDS && !this.heyed && !this.irritated) {
@@ -1247,7 +1264,11 @@ export class GameScene extends Phaser.Scene {
       if (knock > 0) e.setData('knock', knock - dt);
       else if (mood === 'curious') this.steerCurious(e);
       else if (mood === 'skeptical') {
-        if (!this.flinch(e)) this.steerWander(e, dt, true);
+        if (this.tutorial && this.stillFor >= WARY_TRUST_SECONDS) this.creepIn(e);
+        else {
+          e.setData('creeping', false);
+          if (!this.flinch(e)) this.steerWander(e, dt, true);
+        }
       } else this.steerChaser(e, dt, mood);
     }
   }
@@ -1362,6 +1383,21 @@ export class GameScene extends Phaser.Scene {
     this.physics.velocityFromRotation(toward, (d > CURIOUS_NEAR ? CURIOUS_DRIFT : 0) + bob, (e.body as Phaser.Physics.Arcade.Body).velocity);
   }
 
+  /** A wary seed and a still core: it creeps in, stop-start, and settles inside you to be taken in. */
+  private creepIn(e: Sprite) {
+    if (!e.getData('creeping')) {
+      e.setData('creeping', true);
+      this.think(e, THOUGHTS.wary);
+    }
+    // Kept unstartled, so the first move you make while it is close sends it jerking away.
+    e.setData('near', false);
+    const d = Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y);
+    if (d < 3) return void e.setVelocity(0, 0);
+    // Stop-start: it edges forward, almost stops, edges forward again.
+    const hesitate = 0.35 + 0.65 * Math.max(0, Math.sin(this.time.now / 260 + (e.getData('phase') as number)));
+    this.physics.moveToObject(e, this.player, Math.min(d * 4, WARY_CREEP_SPEED * hesitate));
+  }
+
   /** The moment you come near, a skeptical seed jerks away and squashes. Returns true on that frame. */
   private flinch(e: Sprite) {
     const d = Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y);
@@ -1439,7 +1475,7 @@ export class GameScene extends Phaser.Scene {
     e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false).setAlpha(1);
     e.setData({
       mood, gen, baseSize: gen ? BROOD_SIZE : 1, hp: gen ? BROOD_HP : 3, speed: AGGRO_SPEED, knock: 0, wander: 0, absorb: 0, tint: 0xffffff,
-      phase: Math.random() * Math.PI * 2, near: false, irritated: false, lost: 0, noticed: false, swore: false,
+      phase: Math.random() * Math.PI * 2, near: false, irritated: false, lost: 0, noticed: false, swore: false, creeping: false,
     });
     this.showMood(e, false);
     if (!gen) return sfx.seed();
