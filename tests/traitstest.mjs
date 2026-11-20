@@ -60,7 +60,8 @@ const st = () => evaluate(`(() => { const s = ${G}; return { tutorial: s.tutoria
   ability: s.lastAbility, cd: +s.abilityCooldown.toFixed(1), phase: s.phaseLeft > 0, brace: s.braceLeft > 0, hp: +s.hp.toFixed(2), damage: +s.stats.damage.toFixed(3), shots: s.bullets.getChildren().filter(b => b.active).length }; })()`);
 const clearField = () => evaluate(`(() => { const s = ${G}; s.enemies.getChildren().forEach(e => e.disableBody(true, true)); s.spawnTimer = 1e9; s.hp = 100; s.invuln = 0; })()`);
 const killFirst = () => evaluate(`(() => { const s = ${G}; const e = s.enemies.getChildren().find(e => e.active); e.setData('hp', 0.1); const b = s.bullets.get(); b.enableBody(true, e.x, e.y, true, true); b.setData({ pierce: 0, life: 1, hits: new Set() }); s.onBulletHit(b, e); })()`);
-const hitOnce = () => evaluate(`(() => { const s = ${G}; s.invuln = 0; s.onPlayerHit(); return +s.hp.toFixed(2); })()`);
+// (Hits grow harder as a run goes on, so these are all taken at its very start.)
+const hitOnce = () => evaluate(`(() => { const s = ${G}; s.invuln = 0; s.elapsed = 0; s.onPlayerHit(); return +s.hp.toFixed(2); })()`);
 
 // HARD: kill the seed.
 await load();

@@ -7,14 +7,13 @@ import { canFullscreen, toggleFullscreen } from '../fullscreen';
 import { refreshMusic } from '../music';
 import { bestRun, devFlareOn, devOn, devShotgunOn, isMuted, labelsOn, setDevFlare, setDevShotgun, setLabels, setMuted } from '../storage';
 import { POWER_NAMES, POWER_TIPS, TRAIT_COLOURS, type Trait } from '../traits';
-import type { HudState } from './GameScene';
+import type { HudState, MapState } from './GameScene';
 import type { Upgrade } from '../upgrades';
 
 const PAD = 32; // clears rounded corners and notches in landscape
-/** Gem radar: how far in from the screen edge the arrow sits, its size, and how strongly it shows. */
-const RADAR_INSET = 22;
-const RADAR_SIZE = 9;
-const RADAR_ALPHA = 0.7;
+/** Minimap: its radius on screen, and how far into the world its rim reaches. */
+const MAP_R = 44;
+const MAP_RANGE = 1400;
 /** Ignore taps on a fresh menu briefly, so a thumb lifting mid-fight can't pick for you. */
 const MENU_ARM_MS = 400;
 /** The HUD is hidden during the tutorial, then snaps in when the fight starts. */
@@ -61,7 +60,8 @@ export class UIScene extends Phaser.Scene {
   /** Desktop: the "press e" hint shows once, the first time the power is ready. */
   private abilityHinted = false;
   private hud!: Phaser.GameObjects.Graphics;
-  private radar!: Phaser.GameObjects.Graphics;
+  private map!: Phaser.GameObjects.Graphics;
+  private mapZone?: Phaser.GameObjects.Zone;
   private pauseBtn!: Phaser.GameObjects.Container;
   /** Only where fullscreen is supported. */
   private fsBtn?: Phaser.GameObjects.Container;
@@ -77,7 +77,7 @@ export class UIScene extends Phaser.Scene {
   private xpZone?: Phaser.GameObjects.Zone;
   private orb?: Phaser.GameObjects.Image;
   private info!: Phaser.GameObjects.Text;
-  /** Whether the HUD (bars, info line, gem radar) is showing; off during the tutorial. */
+  /** Whether the HUD (bars, info line, minimap) is showing; off during the tutorial. */
   private hudShown = false;
   private hint?: Phaser.GameObjects.Text;
   private menu?: Phaser.GameObjects.Container;
@@ -109,7 +109,7 @@ export class UIScene extends Phaser.Scene {
     this.events.once('shutdown', () => this.scale.off('resize', this.onResize, this));
     this.sticks = new TwinStick(this);
     this.hud = this.add.graphics();
-    this.radar = this.add.graphics();
+    this.map = this.add.graphics();
     this.info = this.label(PAD, PAD + 22, '', { fontSize: '15px', color: '#cbd5e1' });
 
     const pauseBg = this.add.rectangle(0, 0, 44, 44, 0x1e293b, 0.7).setStrokeStyle(2, 0x334155);
@@ -121,11 +121,12 @@ export class UIScene extends Phaser.Scene {
     this.tip(pauseBg, 'Pause. Esc, P and Space do the same.');
     this.tipBox = this.tipTimer = undefined;
     this.abilityExplained = false;
-    this.hpZone = this.xpZone = undefined;
+    this.hpZone = this.xpZone = this.mapZone = undefined;
     if (!this.sys.game.device.input.touch) {
       const shown = (text: string) => () => (this.hudShown && !this.menu ? text : '');
       this.hpZone = this.tip(this.add.zone(PAD, PAD - 6, 260, 24).setOrigin(0).setInteractive(), shown('Your energy. Hits take it, and so does every shot you fire. Firing alone can never take the last of it.'));
       this.xpZone = this.tip(this.add.zone(0, 0, 100, 10).setOrigin(0).setInteractive(), shown('Gems fill this. When it is full you gain a level and choose a card.'));
+      this.mapZone = this.tip(this.add.zone(-999, -999, MAP_R * 2, MAP_R * 2).setInteractive(), shown('A map of what is around you. Gems are green, motes of energy are white, and the crowd is red.'));
     }
 
     // The ability button: tap (or right-click anywhere on desktop). Hidden until the core has a trait.
@@ -243,7 +244,7 @@ export class UIScene extends Phaser.Scene {
       this.hudShown = false;
       this.hud.clear().setAlpha(0);
       this.info.setAlpha(0);
-      this.radar.clear();
+      this.map.clear();
       this.drawAbility(null);
       return;
     }
@@ -261,7 +262,6 @@ export class UIScene extends Phaser.Scene {
     g.fillStyle(0x4ade80).fillRect(0, 0, (s.xp / s.xpNext) * w, 5);
 
     this.info.setText(`lv ${s.level}   ${clock(s.elapsed)}   ${s.kills} ${s.hell ? 'kills' : 'souls'}`);
-    this.drawRadar(s.gemArrow);
     this.drawAbility(s.ability);
   }
 
@@ -326,32 +326,50 @@ export class UIScene extends Phaser.Scene {
   }
 
   /** A small green arrow at the screen edge, on the line from the player toward the nearest off-screen gem. */
-  private drawRadar(arrow: HudState['gemArrow']) {
-    const g = this.radar.clear();
-    if (!arrow) return;
-    const { w, h } = this;
-    const m = RADAR_INSET;
-    const ox = Phaser.Math.Clamp(arrow.px * w, m, w - m);
-    const oy = Phaser.Math.Clamp(arrow.py * h, m, h - m);
-    const dx = Math.cos(arrow.angle);
-    const dy = Math.sin(arrow.angle);
-    // Walk from the player along the direction until the inset edge.
-    const tx = dx > 0 ? (w - m - ox) / dx : dx < 0 ? (m - ox) / dx : Infinity;
-    const ty = dy > 0 ? (h - m - oy) / dy : dy < 0 ? (m - oy) / dy : Infinity;
-    const t = Math.min(tx, ty);
-    const x = ox + dx * t;
-    const y = oy + dy * t;
-    const s = RADAR_SIZE;
-    const side = arrow.angle + Math.PI / 2;
-    // Long and narrow, so the point reads clearly at any angle.
-    const bx = x - dx * s;
-    const by = y - dy * s;
-    const half = s * 0.55;
-    g.fillStyle(0x4ade80, RADAR_ALPHA).fillTriangle(
-      x + dx * s, y + dy * s,
-      bx + Math.cos(side) * half, by + Math.sin(side) * half,
-      bx - Math.cos(side) * half, by - Math.sin(side) * half,
-    );
+  /**
+   * The minimap: what is around the core, out to MAP_RANGE. Gems beyond that sit on the rim, so
+   * it still points the way to them. Phones keep the right side for the power button, so there it
+   * sits under the bars; on desktop it takes the corner under the buttons.
+   */
+  updateMap(m: MapState) {
+    const g = this.map.clear();
+    if (!this.hudShown) return;
+    const touch = this.sys.game.device.input.touch;
+    const cx = touch ? PAD + MAP_R : this.w - PAD - MAP_R;
+    const cy = touch ? PAD + 52 + MAP_R : PAD + 50 + MAP_R;
+    this.mapZone?.setPosition(cx, cy);
+    const k = MAP_R / MAP_RANGE;
+    const near = (x: number, y: number) => x * x + y * y < MAP_RANGE * MAP_RANGE;
+    g.fillStyle(0x020617, 0.6).fillCircle(cx, cy, MAP_R);
+    g.lineStyle(1, 0x334155, 0.9).strokeCircle(cx, cy, MAP_R);
+    // The patch of it that is on screen.
+    g.lineStyle(1, 0x94a3b8, 0.25).strokeRect(cx - (m.viewW * k) / 2, cy - (m.viewH * k) / 2, m.viewW * k, m.viewH * k);
+    g.fillStyle(0xf43f5e, 0.55);
+    for (let i = 0; i < m.enemies.length; i += 2) {
+      const x = m.enemies[i], y = m.enemies[i + 1];
+      if (near(x, y)) g.fillRect(cx + x * k - 1, cy + y * k - 1, 2, 2);
+    }
+    g.fillStyle(0xf8fafc, 0.9);
+    for (let i = 0; i < m.motes.length; i += 2) {
+      const x = m.motes[i], y = m.motes[i + 1];
+      if (near(x, y)) g.fillRect(cx + x * k - 1, cy + y * k - 1, 2, 2);
+    }
+    // Gems: in reach at their place, bigger the more they are worth; beyond it, one dot per direction on the rim.
+    const rim = new Set<number>();
+    for (let i = 0; i < m.gems.length; i += 3) {
+      const x = m.gems[i], y = m.gems[i + 1], worth = m.gems[i + 2];
+      const size = 2 + Math.min(3, Math.log2(worth));
+      if (near(x, y)) {
+        g.fillStyle(0x4ade80, 1).fillRect(cx + x * k - size / 2, cy + y * k - size / 2, size, size);
+        continue;
+      }
+      const a = Math.atan2(y, x);
+      const bucket = Math.round(a / (Math.PI / 18));
+      if (rim.has(bucket)) continue;
+      rim.add(bucket);
+      g.fillStyle(0x4ade80, 0.75).fillRect(cx + Math.cos(a) * (MAP_R - 3) - 1.5, cy + Math.sin(a) * (MAP_R - 3) - 1.5, 3, 3);
+    }
+    g.fillStyle(m.colour, 1).fillCircle(cx, cy, 2.5);
   }
 
   showLevelUp(choices: Upgrade[], onPick: (u: Upgrade) => void) {

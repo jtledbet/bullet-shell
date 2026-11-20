@@ -110,7 +110,8 @@ st = await state();
 check('running far ends in bullet heaven, +1 calm', !st.tutorial && st.mode === 'heaven' && st.traits.calm === 1 && st.active === 0, st);
 
 // Absorbing: calm and angry.
-await fresh('curious', 0); await sleep(2200);
+// Absorbing takes a little over two seconds: wait for it to finish rather than guess.
+await fresh('curious', 0); for (let i = 0; i < 24 && (await evaluate(`${G}.tutorial`)); i++) await sleep(250);
 await fresh('aggro', 0); await sleep(4500);
 const c1 = await counts();
 const delta = Object.fromEntries(Object.keys(c1).map((k) => [k, c1[k] - (c0[k] ?? 0)]));

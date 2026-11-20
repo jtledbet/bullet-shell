@@ -52,18 +52,21 @@ export interface Upgrade {
   available?(stats: Stats): boolean;
 }
 
+/** Damage and fire-rate cards add a share of where you started, so stacking them grows steadily rather than without end. */
+const BASE = baseStats();
+
 export const UPGRADES: Upgrade[] = [
   {
     name: 'Quick Trigger',
     desc: '+25% fire rate',
     tip: 'Your bolts come faster. Each one still costs a sliver of your own energy, so you spend yourself faster too.',
-    apply: (s) => (s.fireRate *= 1.25),
+    apply: (s) => (s.fireRate += BASE.fireRate * 0.25),
   },
   {
     name: 'Heavy Rounds',
     desc: '+50% damage',
     tip: 'More of you goes into every shot. Bolts, sparks, flares and your blast all hit harder.',
-    apply: (s) => (s.damage *= 1.5),
+    apply: (s) => (s.damage += BASE.damage * 0.5),
   },
   {
     name: 'Split Shot',
@@ -115,8 +118,8 @@ export const UPGRADES: Upgrade[] = [
   },
   {
     name: 'Siphon',
-    desc: 'Each kill restores 1 HP',
-    tip: 'Whatever you destroy gives a little of itself back to you. It adds up fast in a crowd.',
+    desc: 'Each kill restores 1 HP, up to 2 a second',
+    tip: 'Whatever you destroy gives a little of itself back to you, though only so much each second. Take it again to draw more.',
     apply: (s) => (s.leech += 1),
   },
   {

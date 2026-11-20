@@ -4,7 +4,7 @@ import { POWER } from '../controls';
 import { Face } from '../face';
 import { sfx } from '../audio';
 import { pixelRatio, TEX_SCALE } from '../display';
-import { restHum, setDanger, setHum, setPauseMusic } from '../music';
+import { lullHum, restHum, setDanger, setHum, setPauseMusic } from '../music';
 import { bestRun, devFlareOn, devShotgunOn, labelsOn, recordRun, setDev, setLabels } from '../storage';
 import { CORE_COLOURS, CORE_WHITE, POWER_NAMES, TRAIT_COLOURS, type Trait } from '../traits';
 import { baseStats, rollUpgrades, type Stats } from '../upgrades';
@@ -120,6 +120,24 @@ const PRESSURE_FULL = 25;
 const PRESSURE_ZOOM_RATE = 0.6;
 const CONTACT_DAMAGE = 10;
 const INVULN_SECONDS = 0.7;
+/** Hits grow harder as a run goes on: one more CONTACT_DAMAGE's worth every HIT_GROWTH_SECONDS. */
+const HIT_GROWTH_SECONDS = 240;
+/** On top of their steady toughening, enemies compound by TOUGHEN_RATE every TOUGHEN_SECONDS, so every run ends. */
+const TOUGHEN_RATE = 1.03;
+const TOUGHEN_SECONDS = 30;
+/** Siphon's ceiling: each one lets kills give back at most this much energy a second. */
+const LEECH_PER_SECOND = 2;
+/** Waves: this long of enemies arriving, then a lull this long with none. */
+const WAVE_SECONDS = 60;
+const LULL_SECONDS = 10;
+/** In a lull, gems and motes are pulled in from this many times farther away. */
+const LULL_MAGNET = 3;
+/** In a lull, every enemy out of sight has left within this long, each at its own moment. */
+const LULL_LEAVE_SECONDS = 2.5;
+/** A merged gem grows with its worth, up to this many times its size. */
+const GEM_MAX_GROWTH = 2.5;
+/** How often the minimap is redrawn, in seconds. */
+const MAP_REFRESH = 0.1;
 /** Draw scale for the oversized textures. Body sizes passed to setCircle are in texture pixels. */
 const SPRITE_SCALE = 1 / TEX_SCALE;
 const T = TEX_SCALE;
@@ -276,7 +294,7 @@ const BRACE_DAMAGE = 0.2;
  * Weapons. Every level makes your shots hit this much harder (on top of any cards), and your
  * bolts grow a little to show it. A bolt that lands without killing jolts its target back.
  */
-const LEVEL_DAMAGE = 0.08;
+const LEVEL_DAMAGE = 0.04;
 const BOLT_GROWTH = 0.04;
 const BOLT_GROWTH_MAX = 1.6;
 const BOLT_JOLT = 110;
@@ -346,6 +364,21 @@ interface TutorialNotes {
   absorbed: number;
 }
 
+/** What the minimap shows, relative to the core, in world units. */
+export interface MapState {
+  /** x, y and worth for every gem. */
+  gems: number[];
+  /** x and y for every mote of energy. */
+  motes: number[];
+  /** x and y for every enemy. */
+  enemies: number[];
+  /** The size of the patch of world on screen. */
+  viewW: number;
+  viewH: number;
+  /** The core's colour right now. */
+  colour: number;
+}
+
 export interface HudState {
   hp: number;
   maxHp: number;
@@ -354,11 +387,6 @@ export interface HudState {
   level: number;
   kills: number;
   elapsed: number;
-  /**
-   * Gem radar: when no gem is on screen, where the player sits in the view (0..1 across and
-   * down) and the direction to the nearest gem. Null while a gem is visible, or there are none.
-   */
-  gemArrow: { px: number; py: number; angle: number } | null;
   /** The HUD stays hidden during the tutorial. */
   tutorial: boolean;
   /** Which way orientation went. The count reads "kills" in bullet hell and "souls" otherwise. */
@@ -426,6 +454,12 @@ export class GameScene extends Phaser.Scene {
   private gridKick = 0;
   private blastAngle = 0;
   private spawnTimer = 0;
+  /** How much Siphon may still give back right now; it refills over time. */
+  private leechBudget = 0;
+  /** Seconds until the minimap is redrawn. */
+  private mapTimer = 0;
+  /** Whether the run is between waves. */
+  private lulling = false;
   private invuln = 0;
   private pendingLevels = 0;
   /** True whenever play is halted: pause, level-up, or game over. */
@@ -497,6 +531,9 @@ export class GameScene extends Phaser.Scene {
     this.impactBlast = -1;
     this.level = 1;
     this.spawnTimer = 1;
+    this.leechBudget = this.mapTimer = 0;
+    this.lulling = false;
+    lullHum(false);
     this.frozen = this.paused = false;
     // A new game opens with orientation, unless it picks up right after the last one.
     this.tutorial = !resume;
@@ -731,6 +768,14 @@ export class GameScene extends Phaser.Scene {
     this.fireShotgun(dt);
     this.fireFlare(dt);
     this.spawn(dt);
+    this.waves(dt);
+    // Siphon's allowance refills steadily, up to one second's worth.
+    const leechCap = this.stats.leech * LEECH_PER_SECOND;
+    this.leechBudget = Math.min(leechCap, this.leechBudget + leechCap * dt);
+    if (!this.tutorial && (this.mapTimer -= dt) <= 0) {
+      this.mapTimer = MAP_REFRESH;
+      this.ui.updateMap(this.mapState());
+    }
 
     if (this.invuln > 0) this.invuln -= dt;
     this.abilityCooldown = Math.max(0, this.abilityCooldown - dt);
@@ -864,35 +909,35 @@ export class GameScene extends Phaser.Scene {
       level: this.level,
       kills: this.kills,
       elapsed: this.elapsed,
-      gemArrow: this.gemArrow(),
       tutorial: this.tutorial,
       hell: this.mode === 'hell',
       ability: this.abilityHud(),
     };
   }
 
-  private gemArrow(): HudState['gemArrow'] {
-    const view = this.cameras.main.worldView;
-    let nearest: Sprite | undefined;
-    let best = Infinity;
+  /** What the minimap shows: everything's place relative to the core, in world units. */
+  private mapState(): MapState {
+    const px = this.player.x, py = this.player.y;
+    const gems: number[] = [], motes: number[] = [], enemies: number[] = [];
     for (const obj of this.gems.getChildren()) {
       const g = obj as Sprite;
-      if (!g.active) continue;
-      if (view.contains(g.x, g.y)) return null;
-      const d = Phaser.Math.Distance.Squared(this.player.x, this.player.y, g.x, g.y);
-      if (d < best) [best, nearest] = [d, g];
+      if (g.active) gems.push(g.x - px, g.y - py, g.getData('worth') ?? 1);
     }
-    if (!nearest) return null;
-    return {
-      px: (this.player.x - view.x) / view.width,
-      py: (this.player.y - view.y) / view.height,
-      angle: Phaser.Math.Angle.Between(this.player.x, this.player.y, nearest.x, nearest.y),
-    };
+    for (const obj of this.motes.getChildren()) {
+      const m = obj as Sprite;
+      if (m.active) motes.push(m.x - px, m.y - py);
+    }
+    for (const obj of this.enemies.getChildren()) {
+      const e = obj as Sprite;
+      if (e.active) enemies.push(e.x - px, e.y - py);
+    }
+    const view = this.cameras.main.worldView;
+    return { gems, motes, enemies, viewW: view.width, viewH: view.height, colour: this.coreColour };
   }
 
   private xpToNext() {
     if (this.level === 1) return FIRST_LEVEL_XP;
-    return Math.floor(5 * Math.pow(this.level, 1.35));
+    return Math.floor(5 * Math.pow(this.level, 1.5));
   }
 
   private movePlayer(dt: number) {
@@ -1098,8 +1143,33 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Is the run between waves? */
+  private inLull() {
+    return !this.tutorial && this.elapsed % (WAVE_SECONDS + LULL_SECONDS) >= WAVE_SECONDS;
+  }
+
+  /** Between waves nothing new arrives, the ones out of sight drift off, and the hum rests. */
+  private waves(dt: number) {
+    const lull = this.inLull();
+    if (lull !== this.lulling) {
+      this.lulling = lull;
+      lullHum(lull);
+      // Each one gets its own moment to leave, so they thin out rather than vanish together.
+      if (lull) for (const obj of this.enemies.getChildren()) (obj as Sprite).setData('leave', Math.random() * LULL_LEAVE_SECONDS);
+    }
+    if (!lull) return;
+    const view = this.cameras.main.worldView;
+    for (const obj of this.enemies.getChildren()) {
+      const e = obj as Sprite;
+      if (!e.active || view.contains(e.x, e.y)) continue;
+      const leave = (e.getData('leave') as number) - dt;
+      e.setData('leave', leave);
+      if (leave <= 0) e.disableBody(true, true);
+    }
+  }
+
   private spawn(dt: number) {
-    if (this.tutorial) return;
+    if (this.tutorial || this.inLull()) return;
     this.spawnTimer -= dt;
     if (this.spawnTimer > 0) return;
     this.spawnTimer = Math.max(0.15, 1.1 - this.elapsed * 0.006);
@@ -1121,7 +1191,7 @@ export class GameScene extends Phaser.Scene {
     this.forget(e);
     e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false).setAlpha(1).setAngle(0);
     // Darker red means tougher.
-    const hp = (3 + this.elapsed / 25) * Phaser.Math.FloatBetween(...TOUGHNESS_SPREAD);
+    const hp = (3 + this.elapsed / 25) * Math.pow(TOUGHEN_RATE, this.elapsed / TOUGHEN_SECONDS) * Phaser.Math.FloatBetween(...TOUGHNESS_SPREAD);
     const tint = lerpColor(0xffffff, DARKEST_TINT, Phaser.Math.Clamp((hp - HP_LIGHTEST) / (HP_DARKEST - HP_LIGHTEST), 0, 1));
     this.restoreTint(e.setData('tint', tint));
     e.setData({
@@ -1463,7 +1533,11 @@ export class GameScene extends Phaser.Scene {
         this.gainTrait('hard');
         this.checkTutorialDone();
       } else {
-        if (this.stats.leech) this.heal(this.stats.leech);
+        if (this.stats.leech) {
+          const back = Math.min(this.stats.leech, this.leechBudget);
+          this.leechBudget -= back;
+          this.heal(back);
+        }
         if (Math.random() < MOTE_CHANCE) this.dropMote(e.x + 8, e.y - 6);
       }
       return true;
@@ -1909,6 +1983,11 @@ export class GameScene extends Phaser.Scene {
     this.onPlayerHit();
   }
 
+  /** What one hit takes, before armour: more the longer the run has gone on. */
+  private hitDamage() {
+    return CONTACT_DAMAGE * (1 + this.elapsed / HIT_GROWTH_SECONDS);
+  }
+
   private onPlayerHit() {
     if (this.invuln > 0 || this.frozen || this.tutorial || this.phaseLeft > 0 || this.shield > 0) return;
     // Calm: some hits pass straight through.
@@ -1918,7 +1997,7 @@ export class GameScene extends Phaser.Scene {
     }
     // Hard: hits do less damage, and much less while braced.
     const armor = 1 - HARD_ARMOR * this.trait('hard');
-    this.hp -= CONTACT_DAMAGE * armor * (this.braceLeft > 0 ? BRACE_DAMAGE : 1);
+    this.hp -= this.hitDamage() * armor * (this.braceLeft > 0 ? BRACE_DAMAGE : 1);
     this.invuln = INVULN_SECONDS;
     this.face.react('hit');
     this.cameras.main.shake(120, 0.006);
@@ -1977,14 +2056,40 @@ export class GameScene extends Phaser.Scene {
 
   private dropGem(x: number, y: number) {
     const g = this.gems.get() as Sprite | null;
-    if (!g) return;
+    if (!g) return this.mergeGem();
     g.enableBody(true, x, y, true, true);
-    g.setScale(SPRITE_SCALE).setDepth(3);
+    g.setScale(SPRITE_SCALE).setDepth(3).setBlendMode(Phaser.BlendModes.NORMAL).setData({ worth: 1, born: this.elapsed });
+  }
+
+  /**
+   * The ground is full: a new gem's worth goes into the oldest one out of sight instead (or, if
+   * every gem is in sight, the nearest), which grows and brightens. Nothing is lost.
+   */
+  private mergeGem() {
+    const view = this.cameras.main.worldView;
+    let oldest: Sprite | undefined, nearest: Sprite | undefined;
+    let born = Infinity, best = Infinity;
+    for (const obj of this.gems.getChildren()) {
+      const g = obj as Sprite;
+      if (!g.active) continue;
+      if (!view.contains(g.x, g.y)) {
+        if (g.getData('born') < born) [born, oldest] = [g.getData('born'), g];
+      } else {
+        const d = Phaser.Math.Distance.Squared(this.player.x, this.player.y, g.x, g.y);
+        if (d < best) [best, nearest] = [d, g];
+      }
+    }
+    const into = oldest ?? nearest;
+    if (!into) return;
+    const worth = (into.getData('worth') as number) + 1;
+    into.setData('worth', worth).setBlendMode(Phaser.BlendModes.ADD);
+    into.setScale(SPRITE_SCALE * Math.min(GEM_MAX_GROWTH, 1 + Math.log2(worth) * 0.25));
   }
 
   /** Gems and motes of energy within reach fly to you. */
   private pullGems() {
-    const reach = this.stats.magnet * this.stats.magnet;
+    const r = this.stats.magnet * (this.lulling ? LULL_MAGNET : 1);
+    const reach = r * r;
     for (const obj of [...this.gems.getChildren(), ...this.motes.getChildren()]) {
       const g = obj as Sprite;
       if (!g.active) continue;
@@ -2000,7 +2105,7 @@ export class GameScene extends Phaser.Scene {
     if (!g.active) return;
     g.disableBody(true, true);
     sfx.gem();
-    this.gainXp(1);
+    this.gainXp(g.getData('worth') ?? 1);
   }
 
   private gainXp(n: number) {

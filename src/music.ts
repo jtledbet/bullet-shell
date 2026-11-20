@@ -164,7 +164,7 @@ export function refreshMusic() {
   if (should && !playing) start(out!.ctx, out!.master);
   else if (!should && playing) stop();
   // The hum gives way to the pause music.
-  const shouldHum = humWanted && !humResting && !wanted && audible;
+  const shouldHum = humWanted && !humResting && !humLull && !wanted && audible;
   if (shouldHum && !hum) startHum(out!.ctx, out!.master);
   else if (!shouldHum && hum) stopHum();
 }
@@ -183,14 +183,22 @@ const HUM_GLIDE = 0.35;
 
 let humWanted = false;
 let humResting = false;
+let humLull = false;
 let danger = 0;
 let hum: { out: GainNode; filter: BiquadFilterNode; rumble: GainNode; dissonance: GainNode; lfo: OscillatorNode; depth: GainNode; oscs: OscillatorNode[] } | undefined;
 
 /** Called with true when a game starts and false when it ends. */
 export function setHum(on: boolean) {
   humWanted = on;
-  humResting = false;
+  humResting = humLull = false;
   if (on) danger = 0;
+  refreshMusic();
+}
+
+/** Between waves the hum rests too, apart from any rest a level-up asks for. */
+export function lullHum(on: boolean) {
+  if (humLull === on) return;
+  humLull = on;
   refreshMusic();
 }
 

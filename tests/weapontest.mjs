@@ -23,7 +23,7 @@ await clear();
 await dummy(80, 0);
 await evaluate(`(() => { const s = ${G}; s.level = 6; s.shoot(0, 600, 1, false); window.__scale = s.bullets.getChildren().find(b => b.active).scaleX * 4; })()`); await sleep(120);
 f = await foes();
-check('at level 6 the same bolt does 1.96 (shows 20) and is 20% bigger', f[0].hp === 498 && (await numbers()).includes('20') && Math.abs((await evaluate(`window.__scale`)) - 1.2) < 0.01, { f, n: await numbers(), scale: await evaluate(`window.__scale`) });
+check('at level 6 the same bolt does 1.68 (shows 17) and is 20% bigger', f[0].hp === 498.3 && (await numbers()).includes('17') && Math.abs((await evaluate(`window.__scale`)) - 1.2) < 0.01, { f, n: await numbers(), scale: await evaluate(`window.__scale`) });
 await evaluate(`${G}.level = 1`); await clear();
 
 // --- The flare.

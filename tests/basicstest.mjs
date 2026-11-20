@@ -49,14 +49,15 @@ await shot('power.png');
 await evaluate(`(() => { const s = ${G}; s.traits = { hard: 0, calm: 3, rage: 0 }; s.lastTrait = 'calm'; s.abilityCooldown = 0; s.fireCooldown = 1e9; s.bullets.getChildren().forEach(b => b.disableBody(true, true)); s.enemies.getChildren().filter(e => e.active).forEach(e => { e.setData('speed', 90); e.setData('hp', 1e9); }); })()`); await sleep(300);
 const off = () => evaluate(`(() => { const s = ${G}; return s.enemies.getChildren().filter(e => e.active).map(e => { const a = Math.atan2(e.body.velocity.y, e.body.velocity.x) - Math.atan2(s.player.y - e.y, s.player.x - e.x); return +Math.abs(Math.atan2(Math.sin(a), Math.cos(a))).toFixed(2); }); })()`);
 check('enemies chase you normally', (await off()).every((a) => a < 0.05), await off());
-await evaluate(`(() => { const s = ${G}; s.useAbility(); s.player.y += 260; })()`); await sleep(400);
+// Gather them within reach first: how many have arrived by now depends on spawn timing.
+await evaluate(`(() => { const s = ${G}; s.enemies.getChildren().filter(e => e.active).forEach((e, i) => e.setPosition(s.player.x + Math.cos(i) * 150, s.player.y + Math.sin(i) * 150)); s.useAbility(); s.player.y += 260; })()`); await sleep(400);
 const lost = await off();
-check('while you phase, the ones nearby are charmed', (await evaluate(`${G}.phaseLeft`)) > 0 && (await evaluate(`${G}.enemies.getChildren().filter(e => e.active && e.getData('charmed')).length`)) >= 6, lost);
+check('while you phase, the ones nearby are charmed', (await evaluate(`${G}.phaseLeft`)) > 0 && (await evaluate(`${G}.enemies.getChildren().filter(e => e.active && e.getData('charmed')).length`)) >= 6, { lost, elapsed: await evaluate(`${G}.elapsed`), charmed: await evaluate(`${G}.enemies.getChildren().filter(e => e.active && e.getData('charmed')).length`) });
 await sleep(5600);
 check('and find you again after', (await off()).every((a) => a < 0.6), await off());
 
 // --- First upgrade at 3 gems.
-check('first level-up needs 3, the second 12', (await evaluate(`${G}.xpToNext()`)) === 3 && (await evaluate(`(() => { const s = ${G}; s.level = 2; const n = s.xpToNext(); s.level = 1; return n; })()`)) === 12);
+check('first level-up needs 3, the second 14', (await evaluate(`${G}.xpToNext()`)) === 3 && (await evaluate(`(() => { const s = ${G}; s.level = 2; const n = s.xpToNext(); s.level = 1; return n; })()`)) === 14);
 
 // --- Pause: resume sits where the pause button is.
 const pb = await uiPoint(`u.pauseBtn`);
