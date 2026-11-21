@@ -10,7 +10,7 @@ const W = 844, H = 390;
 mkdirSync(OUT, { recursive: true });
 
 const chrome = spawn(process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe', [
-  '--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${join(OUT, 'profile')}`,
+  '--headless=new', '--mute-audio', `--remote-debugging-port=${PORT}`, `--user-data-dir=${join(OUT, 'profile')}`,
   '--no-first-run', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', 'about:blank',
 ], { stdio: 'ignore' });
 
@@ -49,17 +49,32 @@ await send('Emulation.setTouchEmulationEnabled', { enabled: TOUCH, maxTouchPoint
 await send('Page.navigate', { url: URL }); await sleep(4000);
 for (let i = 0; i < 60 && !(await evaluate(`!!window.game?.scene?.getScene?.('game')?.sys?.isActive()`)); i++) await sleep(250);
 const ab = () => evaluate(`(() => { const u = ${U}, a = u.ability, r = game.canvas.getBoundingClientRect(), k = u.cameras.main.zoom * r.width / game.canvas.width;
-  return { vis: a.visible, x: r.left + a.x * k, y: r.top + a.y * k, cd: ${G}.abilityCooldown, hint: u.children.list.filter(o => o.type === 'Text' && o.text === 'press e').length }; })()`);
+  return { vis: a.visible, x: r.left + a.x * k, y: r.top + a.y * k, cd: ${G}.abilityCooldown, card: !!u.powerCard, frozen: ${G}.frozen }; })()`);
 let a = await ab();
 check('tutorial: no button', !a.vis, a);
 await evaluate(`(() => { const s = ${G}; s.endTutorial(); s.enemies.getChildren().forEach(e => e.disableBody(true, true)); })()`);
 await sleep(300);
 a = await ab();
 check('fight, no traits: no button', !a.vis, a);
-await evaluate(`${G}.traits.rage = 2`); await sleep(600);
+// A power new to this visit: a card in the middle says what it is, then shrinks into the button.
+const tapMiddle = async () => {
+  if (TOUCH) return tap(W / 2, H / 2, 3);
+  const m = (type) => send('Input.dispatchMouseEvent', { type, x: W / 2, y: H / 2, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
+  await m('mouseMoved'); await m('mousePressed'); await sleep(80); await m('mouseReleased');
+};
+await evaluate(`${G}.traits.rage = 2`);
+for (let i = 0; i < 40 && !(await evaluate(`!!${U}.powerCard`)); i++) await sleep(50);
+await tapMiddle(); await sleep(250);
 a = await ab();
-check('rage trait: button shows', a.vis, a);
-check(TOUCH ? 'touch: no key hint' : 'desktop: the key hint shows once', TOUCH ? a.hint === 0 : a.hint === 1, a);
+check('rage trait: its card first, the game held, no button yet (a click as it appears is ignored)', a.card && a.frozen && !a.vis, a);
+const cardText = await evaluate(`${U}.powerCard.list.filter(o => o.type === 'Text').map(o => o.text)`);
+check('the card names the power, says what it does and how to use it', cardText.includes('burst') && cardText.some((x) => x.startsWith('everything close to you')) && cardText.includes(TOUCH ? 'tap to begin' : 'press e or right-click'), cardText);
+await shot('power-card.png');
+await sleep(500); await tapMiddle(); await sleep(200);
+await shot('power-card-shrinking.png');
+await sleep(600);
+a = await ab();
+check('a click sends it into the button: card gone, button there, game going', !a.card && a.vis && !a.frozen, a);
 await shot('ability-ready.png');
 if (TOUCH) { await tap(a.x, a.y, 7); } else {
   const m = (type) => send('Input.dispatchMouseEvent', { type, x: a.x, y: a.y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
@@ -76,7 +91,9 @@ check('hidden while paused', !(await ab()).vis, null);
 await evaluate(`${G}.resumeGame()`); await sleep(6000);
 a = await ab();
 check('recharged and back', a.vis && a.cd === 0, a);
-check('hint not repeated', a.hint === 0, a);
+await evaluate(`(() => { const s = ${G}; s.scene.restart({ resume: { mode: 'heaven', traits: { hard: 0, calm: 0, rage: 2 }, lastTrait: 'rage' } }); })()`); await sleep(1500);
+a = await ab();
+check('the same power next run: no card, just the button', !a.card && a.vis && !a.frozen, a);
 console.log('console errors/warnings:', logs.length ? logs : 'none');
 console.log(failed ? `${failed} FAILED` : 'ALL PASS');
 ws.close(); chrome.kill(); process.exit(0);

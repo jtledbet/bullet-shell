@@ -24,11 +24,14 @@ failures. Screenshots land in `tests/.out/<name>/`, which git ignores.
 Chrome is expected at `C:/Program Files/Google/Chrome/Application/chrome.exe`. Set
 `CHROME` to its path anywhere else.
 
+Each check starts with all three powers already introduced, so a power's card doesn't
+hold the game mid-check. `abilitytest` and `tiptest` clear that to check the card itself.
+
 ## What each one covers
 
 | Script | Covers |
 | --- | --- |
-| `basicstest` | Idle nudges, backdrops, shots, the power's feedback, pause, game over and "again" |
+| `basicstest` | Idle nudges, backdrops, shots, the power's feedback, pause, game over, "again" and "reorient" |
 | `coretest` | The core's colour and face, damage numbers, ghosting, seed thoughts |
 | `energytest` | Firing spends energy, motes, the Siphon card, the red power's blast |
 | `charmtest` | Charm: taking enemies in, how it spreads, how it ends, "souls" and "kills" |
@@ -39,11 +42,11 @@ Chrome is expected at `C:/Program Files/Google/Chrome/Application/chrome.exe`. S
 | `cornertest` | The pause and fullscreen buttons fading back |
 | `orbtest` | The build orb in the pause menu |
 | `rotatetest` | The "turn your phone" screen |
-| `devtest` | The developer shotgun switch, and that `?dev` lasts only for that visit |
-| `tiptest` | Explanations: on cards, on the power, and on hover (it also runs `tipcards` at phone size) |
+| `devtest` | The developer switches and speed readout, and that `?dev` lasts only for that visit |
+| `tiptest` | Explanations: on cards, on the power's card (closed with E), and on hover (it also runs `tipcards` at phone size) |
 | `wavetest` | Balance (harder hits, Siphon's ceiling, card and level growth), merging gems, the lull between waves, and the minimap (it also runs `wavephone` at phone size) |
 | `powertest` | The powers growing with level, and Brace knocking away what touches you |
-| `abilitytest` | The power button; run with `TOUCH=1` for the phone layout |
+| `abilitytest` | The power's card and its button; run with `TOUCH=1` for the phone layout |
 | `tutfixtest` | Orientation's endings, sounds and temperament tells |
 | `traitstest` | What each trait does |
 | `broodtest` | The brood that follows the first angry seed |

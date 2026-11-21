@@ -10,7 +10,7 @@ const W = +process.env.W || 1920, H = +process.env.H || 1080;
 mkdirSync(OUT, { recursive: true });
 
 const chrome = spawn(process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe', [
-  '--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${join(OUT, 'profile')}`,
+  '--headless=new', '--mute-audio', `--remote-debugging-port=${PORT}`, `--user-data-dir=${join(OUT, 'profile')}`,
   '--no-first-run', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', 'about:blank',
 ], { stdio: 'ignore' });
 
@@ -47,6 +47,7 @@ await send('Runtime.enable'); await send('Page.enable');
 await send('Emulation.setDeviceMetricsOverride', { width: W, height: H, deviceScaleFactor: +process.env.DSF || 1, mobile: false });
 await send('Page.navigate', { url: URL }); await sleep(4000);
 for (let i = 0; i < 60 && !(await evaluate(`!!window.game?.scene?.getScene?.('game')?.sys?.isActive()`)); i++) await sleep(250);
+await evaluate(`(() => { const u = game.scene.getScene('ui'); if (u) u.introduced = new Set(['hard', 'calm', 'rage']); return true; })()`);
 await evaluate(`(() => { const s = ${G}; if (s.tutorial) s.endTutorial('${process.env.OUTCOME || 'killed'}'); s.stats.maxHp = s.hp = 1e9; for (let i = 0; i < ${N}; i++) s.spawnEnemy(); })()`);
 await sleep(1500);
 // Time spent in script per frame, measured in-page around the game loop step.

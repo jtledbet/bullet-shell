@@ -5,6 +5,8 @@
 export const POWER = {
   /** Phaser's key name, for `keydown-<key>`. */
   key: 'E',
-  /** What is shown on the power button, and in its first-time hint. */
+  /** What is shown on the power button, and on the card that introduces a power. */
   glyph: 'e',
+  /** The mouse button that does the same, also named on that card. */
+  mouse: 'right-click',
 };

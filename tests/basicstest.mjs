@@ -64,14 +64,14 @@ const pb = await uiPoint(`u.pauseBtn`);
 await click(pb.x, pb.y); await sleep(700);
 check('tap pause: paused', await evaluate(`${G}.paused`), pb);
 await shot('pause.png');
-check('speed readout shown with labels on', (await menuTexts()).some((x) => / fps /.test(x)), (await menuTexts()).slice(-2));
+check('labels on, no ?dev: the version shows, the speed readout does not', !(await menuTexts()).some((x) => / fps /.test(x)) && (await menuTexts()).some((x) => /^v\d+\.\d+\.\d+ /.test(x)), (await menuTexts()).slice(-3));
 await click(pb.x, pb.y); await sleep(400);
 check('tap the same spot again: resumed', !(await evaluate(`${G}.paused`)));
 
-// --- Game over: again (same core, no orientation) and from the start.
+// --- Game over: again (same core, no orientation) and reorient.
 await evaluate(`(() => { const s = ${G}; s.traits = { hard: 0, calm: 0, rage: 2 }; s.outcome.traits = { ...s.traits }; s.gameOver(); })()`); await sleep(700);
 const over = await menuTexts();
-check('game over offers "again" and "from the start"', over.includes('again') && over.includes('from the start') && over.includes('exit to site'), over);
+check('game over offers "again" and "reorient"', over.includes('again') && over.includes('reorient') && over.includes('exit to site'), over);
 await shot('gameover.png');
 const again = await uiPoint(`u.menu.list.find(o => o.type === 'Text' && o.text === 'again')`);
 await click(again.x, again.y); await sleep(1500);

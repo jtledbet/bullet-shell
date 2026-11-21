@@ -359,6 +359,8 @@ const ENERGY_MIN_SIZE = 0.8;
 const MOTE_CHANCE = 0.07;
 const MOTE_HEAL = 6;
 const ABILITY_COOLDOWN = 6;
+/** Seconds into a run before a power new to this visit gets its card: the room has begun to fade, and nothing has arrived yet. */
+const POWER_INTRO_DELAY = 0.6;
 /**
  * The powers are the core's own, so they grow with it. Each level past the first shortens the
  * cooldown by this factor, down to a floor, and each power grows as below, up to its cap.
@@ -791,6 +793,7 @@ export class GameScene extends Phaser.Scene {
     // The run clock (and so difficulty) starts after the tutorial.
     if (!this.tutorial) this.elapsed += dt;
     else this.notes.seconds += dt;
+    if (!this.tutorial && this.elapsed >= POWER_INTRO_DELAY && this.introducePower()) return;
 
     this.movePlayer(dt);
     this.watchTutorial(dt);
@@ -2001,6 +2004,20 @@ export class GameScene extends Phaser.Scene {
     this.physics.velocityFromRotation(away, KNOCKBACK_MAX, (e.body as Phaser.Physics.Arcade.Body).velocity);
     e.setData('knock', KNOCKBACK_SECONDS * 1.6);
     sfx.bump();
+  }
+
+  /** A power new to this visit is explained on a card first, with the game held until the player is ready. Returns whether it did. */
+  private introducePower() {
+    const t = this.strongestTrait();
+    if (!t || !this.ui.needsIntro(t)) return false;
+    this.frozen = true;
+    this.physics.pause();
+    this.ui.introducePower(t, () => {
+      this.frozen = false;
+      this.physics.resume();
+      this.ui.updateHud(this.hudState());
+    });
+    return true;
   }
 
   private useAbility() {

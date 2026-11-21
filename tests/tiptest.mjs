@@ -1,21 +1,25 @@
 import { open } from './cdp.mjs';
 const out = process.argv[2];
-// --- Desktop: hover explains things, and the power explains itself when it first appears.
+// --- Desktop: hover explains things, and a power new to this visit explains itself on a card.
 let t = await open({ out: out + '-desktop', port: 9357, url: 'http://127.0.0.1:5173/?fullres', width: 1280, height: 720, dsf: 1 });
 {
-  const { evaluate, shot, check, sleep, mouse, G, U, uiPoint, uiTexts } = t;
-  const tipText = () => evaluate(`${U}.tipBox ? ${U}.tipBox.list.find(o => o.type === 'Text').text : null`);
+  const { evaluate, shot, check, sleep, mouse, press, G, U, uiPoint, uiTexts } = t;
+  const tipText = () => evaluate(`${U}.tipBox ? ${U}.tipBox.list.filter(o => o.type === 'Text').map(o => o.text).join(' | ') : null`);
   check('every card has an explanation', await evaluate(`import('/src/upgrades.ts').then(m => m.UPGRADES.every(u => u.tip && u.tip.length > 20 && !u.tip.includes('\\u2014')))`));
-  await evaluate(`(() => { const s = ${G}; s.traits = { hard: 0, calm: 2, rage: 0 }; s.lastTrait = 'calm'; s.endTutorial('absorbed'); s.spawnTimer = 1e9; s.fireCooldown = 1e9; return true; })()`); await sleep(700);
-  let tip = await tipText();
-  check('the power says what it does when it first appears', tip && tip.startsWith('phase: slip out of reach'), tip);
-  await shot('power-explains.png');
-  // (Headless Chrome runs the game's clock slow, so allow well past the 7 seconds.)
-  await sleep(9800);
-  check('and that goes away by itself', (await tipText()) === null, await tipText());
+  await evaluate(`(() => { const s = ${G}; ${U}.introduced.delete('calm'); s.traits = { hard: 0, calm: 2, rage: 0 }; s.lastTrait = 'calm'; s.endTutorial('absorbed'); s.spawnTimer = 1e9; s.fireCooldown = 1e9; return true; })()`);
+  const card = () => evaluate(`${U}.powerCard ? ${U}.powerCard.list.filter(o => o.type === 'Text').map(o => o.text) : null`);
+  for (let i = 0; i < 60 && !(await card()); i++) await sleep(50);
+  const c = await card();
+  check('the run starts with a card that names the power, says what it does and how to use it', c && c.includes('phase') && c.some((x) => x.startsWith('slip out of reach')) && c.includes('press e or right-click'), c);
+  check('the game waits behind it', await evaluate(`${G}.frozen`));
+  await sleep(800); await shot('power-card.png');
+  await press('e', 'KeyE', 69); await sleep(900);
+  const after = await evaluate(`({ card: !!${U}.powerCard, button: ${U}.ability.visible, cd: ${G}.abilityCooldown, frozen: ${G}.frozen })`);
+  check('pressing e sends it into the button, without using the power yet', !after.card && after.button && after.cd === 0 && !after.frozen, after);
   const b = await uiPoint(`u.ability`);
   await mouse('mouseMoved', b.x + 3, b.y + 3, 'none'); await sleep(200);
-  check('resting the mouse on the power brings it back', (await tipText())?.startsWith('phase:'), await tipText());
+  check('resting the mouse on the power explains it, its name a bold title', (await tipText())?.startsWith('phase | slip out of reach') && (await evaluate(`${U}.tipBox.list.find(o => o.type === 'Text').style.fontStyle`)) === 'bold', await tipText());
+  await shot('power-hover.png');
   await mouse('mouseMoved', 640, 400, 'none'); await sleep(200);
   check('moving away hides it', (await tipText()) === null);
   await mouse('mouseMoved', 100, 38, 'none'); await sleep(200);

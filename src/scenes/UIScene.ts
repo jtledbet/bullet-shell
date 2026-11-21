@@ -27,6 +27,12 @@ const CORNER_AWAKE_MS = 3000;
 const CORNER_REST_ALPHA = 0.2;
 /** The power button's radius. Its colour comes from the trait driving it. */
 const ABILITY_R = 22;
+/**
+ * The card that introduces a power: how long it ignores input after appearing (so a click
+ * already on its way can't skip it), and how long it takes to shrink into the button.
+ */
+const CARD_ARM_MS = 600;
+const CARD_SHRINK_MS = 420;
 /** The third nudge for a player who hasn't done anything: one quiet word under the core. */
 const NUDGE_WORD = 'move';
 const FONT = 'system-ui, sans-serif';
@@ -34,6 +40,14 @@ const FONT = 'system-ui, sans-serif';
 const SITE_URL = 'https://ledsec.dev/games/';
 /** Half the centre-to-centre gap between two side-by-side menu buttons. */
 const PAIR_OFFSET = 98;
+
+/** An explanation, plain or with a bold title over it. */
+type TipText = string | { title: string; text: string };
+
+/** A power's explanation with its name as a bold title, rather than the "Burst: " it starts with. */
+function powerTip(trait: Trait) {
+  return { title: POWER_NAMES[trait], text: POWER_TIPS[trait].replace(/^\w+: /, '') };
+}
 
 /** Seconds as m:ss. */
 function clock(seconds: number) {
@@ -57,8 +71,9 @@ export class UIScene extends Phaser.Scene {
   /** The power's name beside its button: always on desktop, and on phones when labels are on. */
   private abilityCaption!: Phaser.GameObjects.Text;
   private abilityReady = false;
-  /** Desktop: the "press e" hint shows once, the first time the power is ready. */
-  private abilityHinted = false;
+  /** Powers already introduced this visit. Each gets its card once, the first time it appears; the set outlives restarts. */
+  private introduced = new Set<Trait>();
+  private powerCard?: Phaser.GameObjects.Container;
   private hud!: Phaser.GameObjects.Graphics;
   private map!: Phaser.GameObjects.Graphics;
   private mapZone?: Phaser.GameObjects.Zone;
@@ -69,9 +84,8 @@ export class UIScene extends Phaser.Scene {
   private cornerTimer?: Phaser.Time.TimerEvent;
   private tipBox?: Phaser.GameObjects.Container;
   private tipTimer?: Phaser.Time.TimerEvent;
-  /** The trait behind the power button right now, for its explanation, and whether this run has given it yet. */
+  /** The trait behind the power button right now, for its hover explanation. */
   private abilityTrait?: Trait;
-  private abilityExplained = false;
   /** Desktop: hover areas over the health bar and the experience strip. */
   private hpZone?: Phaser.GameObjects.Zone;
   private xpZone?: Phaser.GameObjects.Zone;
@@ -120,7 +134,7 @@ export class UIScene extends Phaser.Scene {
     this.pauseBtn = this.add.container(0, 0, [pauseBg, pauseIcon]).setDepth(150);
     this.tip(pauseBg, 'Pause. Esc, P and Space do the same.');
     this.tipBox = this.tipTimer = undefined;
-    this.abilityExplained = false;
+    this.powerCard = undefined;
     this.hpZone = this.xpZone = this.mapZone = undefined;
     if (!this.sys.game.device.input.touch) {
       const shown = (text: string) => () => (this.hudShown && !this.menu ? text : '');
@@ -135,7 +149,7 @@ export class UIScene extends Phaser.Scene {
     abilityZone.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (p.button === 0) this.onAbilityRequested?.();
     });
-    this.tip(abilityZone, () => (this.abilityTrait ? POWER_TIPS[this.abilityTrait] : ''));
+    this.tip(abilityZone, () => (this.abilityTrait ? powerTip(this.abilityTrait) : ''));
     // On desktop the button always carries the key that uses it.
     const abilityKey = this
       .label(0, 0, POWER.glyph, { fontSize: '16px', fontStyle: 'bold', color: '#f8fafc' })
@@ -227,6 +241,7 @@ export class UIScene extends Phaser.Scene {
   private onResize() {
     this.cameras.main.setZoom(pixelRatio());
     this.hint?.setPosition(this.w / 2, this.h - PAD);
+    if (this.powerCard && !this.powerCard.getData('closing')) this.powerCard.setPosition(this.w / 2, this.h / 2);
     if (this.menu) this.buildMenu();
   }
 
@@ -267,16 +282,15 @@ export class UIScene extends Phaser.Scene {
 
   /** A round button in the trait's colour, with a ring that fills as it recharges and a pulse when ready. */
   private drawAbility(a: HudState['ability']) {
-    if (!a) {
+    // Hidden until there is a power, and until its card has introduced it.
+    if (!a || !this.introduced.has(a.trait)) {
       this.ability.setVisible(false);
       this.abilityCaption.setVisible(false);
       this.abilityReady = false;
       return;
     }
     const touch = this.sys.game.device.input.touch;
-    // Phones: just above where the right thumb rests. Desktop: top left, under the health bar, where the eye already goes.
-    const x = touch ? this.w - PAD - 64 : PAD + ABILITY_R + 5;
-    const y = touch ? this.h - PAD - 150 : PAD + 58 + ABILITY_R;
+    const { x, y } = this.abilitySpot();
     const appearing = !this.ability.visible;
     this.abilityTrait = a.trait;
     const colour = TRAIT_COLOURS[a.trait];
@@ -305,27 +319,89 @@ export class UIScene extends Phaser.Scene {
     this.abilityReady = ready;
   }
 
-  /** One soft pulse. When the button first appears, also a quiet chime and (desktop, once) a hint. */
+  /** One soft pulse. When the button first appears, also a quiet chime. */
   private pulseAbility(appearing: boolean) {
     this.tweens.add({ targets: this.ability, scale: { from: 1, to: 1.25 }, duration: 160, yoyo: true, ease: 'Sine.Out' });
-    if (!appearing) return;
-    sfx.ready();
-    // The first time it shows in a run, the power says what it does.
-    if (this.abilityTrait && !this.abilityExplained) {
-      this.abilityExplained = true;
-      const touch = this.sys.game.device.input.touch;
-      this.showTip(POWER_TIPS[this.abilityTrait], touch ? this.ability.x - 300 : this.ability.x - ABILITY_R - 14, this.ability.y + (touch ? -30 : ABILITY_R + 16), 7);
-    }
-    if (this.abilityHinted || this.sys.game.device.input.touch) return;
-    this.abilityHinted = true;
-    const hint = this
-      .label(this.ability.x, this.ability.y + ABILITY_R + 12, `press ${POWER.glyph}`, { fontSize: '12px', color: '#94a3b8' })
-      .setOrigin(0.5, 0)
-      .setDepth(150);
-    this.tweens.add({ targets: hint, alpha: 0, delay: 2500, duration: 600, onComplete: () => hint.destroy() });
+    if (appearing) sfx.ready();
   }
 
-  /** A small green arrow at the screen edge, on the line from the player toward the nearest off-screen gem. */
+  /** Where the power button sits. Phones: just above where the right thumb rests. Desktop: top left, under the health bar, where the eye already goes. */
+  private abilitySpot() {
+    const touch = this.sys.game.device.input.touch;
+    return { x: touch ? this.w - PAD - 64 : PAD + ABILITY_R + 5, y: touch ? this.h - PAD - 150 : PAD + 58 + ABILITY_R };
+  }
+
+  /** Whether this power still needs its card this visit. */
+  needsIntro(trait: Trait) {
+    return !this.introduced.has(trait);
+  }
+
+  /**
+   * The first time a power appears this visit, a card in the middle of the screen names it, says
+   * what it does and how to use it, and holds the game until the player is ready. Then it
+   * shrinks into the power button, which appears in its place. `done` runs once it has landed.
+   */
+  introducePower(trait: Trait, done: () => void) {
+    const touch = this.sys.game.device.input.touch;
+    const colour = TRAIT_COLOURS[trait];
+    const width = Math.min(340, this.w - 2 * PAD);
+    const r = ABILITY_R + 5;
+    // The power button in miniature, beside its name: the card becomes it.
+    const badge = this.add
+      .graphics()
+      .fillStyle(colour, 0.45)
+      .fillCircle(0, 0, ABILITY_R)
+      .lineStyle(3, colour, 0.9)
+      .strokeCircle(0, 0, r);
+    const glyph = this.label(0, 0, touch ? '' : POWER.glyph, { fontSize: '16px', fontStyle: 'bold', color: '#f8fafc' }).setOrigin(0.5).setAlpha(0.85);
+    const name = this.label(0, 0, POWER_NAMES[trait], { fontSize: '22px', fontStyle: 'bold', color: '#f8fafc' }).setOrigin(0, 0.5);
+    const what = this.label(0, 0, powerTip(trait).text, { fontSize: '14px', color: '#e2e8f0', wordWrap: { width: width - 40 }, lineSpacing: 3, align: 'center' }).setOrigin(0.5, 0);
+    const how = this.label(0, 0, touch ? 'tap to begin' : `press ${POWER.glyph} or ${POWER.mouse}`, { fontSize: '13px', color: '#94a3b8' }).setOrigin(0.5, 0);
+    // Laid out around the card's middle, so it shrinks toward its centre.
+    const rowW = r * 2 + 12 + name.width;
+    const height = 20 + r * 2 + 14 + what.height + 14 + how.height + 20;
+    let y = -height / 2 + 20 + r;
+    badge.setPosition(-rowW / 2 + r, y);
+    glyph.setPosition(badge.x, y);
+    name.setPosition(badge.x + r + 12, y);
+    y += r + 14;
+    what.setPosition(0, y);
+    how.setPosition(0, y + what.height + 14);
+    const bg = this.add.rectangle(0, 0, width, height, 0x0b1222, 0.95).setStrokeStyle(1.5, colour, 0.8);
+    const card = this.add.container(this.w / 2, this.h / 2, [bg, badge, glyph, name, what, how]).setDepth(450).setScale(0.9).setAlpha(0);
+    this.powerCard = card;
+    this.tweens.add({ targets: card, scale: 1, alpha: 1, duration: 200, ease: 'Back.Out' });
+    // Any click or tap, or the power's key, Enter or Space, sends it to its place.
+    const keys = [POWER.key, 'ENTER', 'SPACE'];
+    const close = () => {
+      if (!card.active || card.getData('closing')) return;
+      card.setData('closing', true);
+      this.input.off('pointerdown', close);
+      keys.forEach((k) => this.input.keyboard?.off(`keydown-${k}`, close));
+      const spot = this.abilitySpot();
+      this.tweens.add({
+        targets: card,
+        x: spot.x,
+        y: spot.y,
+        scale: (ABILITY_R * 2) / width,
+        alpha: 0.4,
+        duration: CARD_SHRINK_MS,
+        ease: 'Cubic.In',
+        onComplete: () => {
+          card.destroy();
+          if (this.powerCard === card) this.powerCard = undefined;
+          this.introduced.add(trait);
+          done();
+        },
+      });
+    };
+    this.time.delayedCall(CARD_ARM_MS, () => {
+      if (!card.active) return;
+      this.input.on('pointerdown', close);
+      keys.forEach((k) => this.input.keyboard?.on(`keydown-${k}`, close));
+    });
+  }
+
   /**
    * The minimap: what is around the core, out to MAP_RANGE. Gems beyond that sit on the rim, so
    * it still points the way to them. Phones keep the right side for the power button, so there it
@@ -423,7 +499,7 @@ export class UIScene extends Phaser.Scene {
         ...(onAgain
           ? [
               ...this.menuButton('again', h * 0.64, onAgain, { dx: -PAIR_OFFSET * 2, tip: 'Straight back in as the same core, skipping orientation.' }),
-              ...this.menuButton('from the start', h * 0.64, onStart, { dx: 0.001, quiet: true, tip: 'Through orientation again. You could become something else.' }),
+              ...this.menuButton('reorient', h * 0.64, onStart, { dx: 0.001, quiet: true, tip: 'Through orientation again. You could become something else.' }),
               ...this.exitButton(h * 0.64, PAIR_OFFSET * 2),
             ]
           : [...this.menuButton('again', h * 0.64, onStart, { dx: -PAIR_OFFSET }), ...this.exitButton(h * 0.64)]),
@@ -445,8 +521,8 @@ export class UIScene extends Phaser.Scene {
         ...this.labelsButton(),
         ...(devOn() ? [...this.devShotgunButton(), ...this.devFlareButton()] : []),
         this.label(this.w - PAD, this.h - 14, `v${__APP_VERSION__} · ${__APP_COMMIT__}`, { fontSize: '11px', color: '#475569' }).setOrigin(1, 1),
-        // With labels on: how fast it's running and on what, for chasing down lag.
-        ...(labelsOn() ? [this.label(PAD, this.h - 14, this.speedReadout(), { fontSize: '11px', color: '#475569' }).setOrigin(0, 1)] : []),
+        // Developer extra (only with `?dev`): how fast it's running and on what, for chasing down lag.
+        ...(devOn() ? [this.label(PAD, this.h - 14, this.speedReadout(), { fontSize: '11px', color: '#475569' }).setOrigin(0, 1)] : []),
       ];
     });
   }
@@ -610,7 +686,7 @@ export class UIScene extends Phaser.Scene {
   }
 
   /** Desktop: resting the mouse on `target` explains it. (Phones have no hover; cards and the power carry their own explanations.) */
-  private tip<T extends Phaser.GameObjects.GameObject>(target: T, text: string | (() => string)) {
+  private tip<T extends Phaser.GameObjects.GameObject>(target: T, text: TipText | (() => TipText)) {
     if (this.sys.game.device.input.touch) return target;
     target.on('pointerover', (p: Phaser.Input.Pointer) => {
       const zoom = this.cameras.main.zoom;
@@ -620,17 +696,19 @@ export class UIScene extends Phaser.Scene {
     return target;
   }
 
-  /** A small box of explanation just below (x, y), kept on screen. With `seconds` it goes away by itself. */
-  showTip(text: string, x: number, y: number, seconds?: number) {
+  /** A small box of explanation just below (x, y), kept on screen, with a bold title if it has one. With `seconds` it goes away by itself. */
+  showTip(tip: TipText, x: number, y: number, seconds?: number) {
     this.hideTip();
+    const { title, text } = typeof tip === 'string' ? { title: '', text: tip } : tip;
     if (!text) return;
-    const label = this.label(10, 7, text, { fontSize: '13px', color: '#e2e8f0', wordWrap: { width: 250 }, lineSpacing: 2 });
-    const w = label.width + 20;
-    const h = label.height + 14;
+    const head = title ? this.label(10, 7, title, { fontSize: '14px', fontStyle: 'bold', color: '#f8fafc' }) : null;
+    const label = this.label(10, head ? head.y + head.height + 3 : 7, text, { fontSize: '13px', color: '#e2e8f0', wordWrap: { width: 250 }, lineSpacing: 2 });
+    const w = Math.max(label.width, head?.width ?? 0) + 20;
+    const h = label.y + label.height + 7;
     const bg = this.add.rectangle(0, 0, w, h, 0x0b1222, 0.95).setOrigin(0).setStrokeStyle(1, 0x475569);
     const bx = Phaser.Math.Clamp(x + 14, 8, Math.max(8, this.w - w - 8));
     const by = y + 20 + h > this.h - 8 ? y - h - 12 : y + 20;
-    this.tipBox = this.add.container(bx, by, [bg, label]).setDepth(400);
+    this.tipBox = this.add.container(bx, by, head ? [bg, head, label] : [bg, label]).setDepth(400);
     if (seconds) this.tipTimer = this.time.delayedCall(seconds * 1000, () => this.hideTip());
   }
 

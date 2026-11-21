@@ -10,7 +10,7 @@ const W = 844, H = 390;
 mkdirSync(OUT, { recursive: true });
 
 const chrome = spawn(process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe', [
-  '--headless=new', `--remote-debugging-port=${PORT}`, `--user-data-dir=${join(OUT, 'profile')}`,
+  '--headless=new', '--mute-audio', `--remote-debugging-port=${PORT}`, `--user-data-dir=${join(OUT, 'profile')}`,
   '--no-first-run', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', 'about:blank',
 ], { stdio: 'ignore' });
 
@@ -44,7 +44,7 @@ const saved = () => evaluate(`JSON.parse(localStorage.getItem('bullet-shell:save
 const menuTexts = () => evaluate(`(game.scene.getScene('ui').menu?.list ?? []).filter(o => o.type === 'Text').map(o => o.text)`);
 const menuOpen = () => evaluate(`!!game.scene.getScene('ui').menu`);
 const die = (elapsed) => evaluate(`(() => { const s = game.scene.getScene('game'); s.elapsed = ${elapsed}; s.gameOver(); })()`);
-const load = async () => { await send('Page.navigate', { url: URL }); await sleep(4000); for (let i = 0; i < 60 && !(await evaluate(`!!window.game?.scene?.getScene?.('game')?.sys?.isActive()`)); i++) await sleep(250); };
+const load = async () => { await send('Page.navigate', { url: URL }); await sleep(4000); for (let i = 0; i < 60 && !(await evaluate(`!!window.game?.scene?.getScene?.('game')?.sys?.isActive()`)); i++) await sleep(250); await evaluate(`(() => { const u = game.scene.getScene('ui'); if (u) u.introduced = new Set(['hard', 'calm', 'rage']); return true; })()`); };
 const aimFor = async (ms, tid) => { await touch('touchStart', [[600, 220, tid]]); await sleep(60); await touch('touchMove', [[670, 220, tid]]); await sleep(ms); await touch('touchEnd', []); };
 const SOUND = [W - 32 - 60, 32 + 14];
 const PAUSE = [W - 32 - 22, 32 + 14];

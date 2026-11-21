@@ -6,7 +6,7 @@ import { join } from 'node:path';
 export async function open({ out, port, url, width = 844, height = 390, dsf = 1, mobile = false, touch = false }) {
   mkdirSync(out, { recursive: true });
   const chrome = spawn(process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe', [
-    '--headless=new', `--remote-debugging-port=${port}`, `--user-data-dir=${join(out, 'profile')}`,
+    '--headless=new', '--mute-audio', `--remote-debugging-port=${port}`, `--user-data-dir=${join(out, 'profile')}`,
     '--no-first-run', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', 'about:blank',
   ], { stdio: 'ignore' });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -47,9 +47,11 @@ export async function open({ out, port, url, width = 844, height = 390, dsf = 1,
   await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: dsf, mobile, screenOrientation: mobile ? { type: width > height ? 'landscapePrimary' : 'portraitPrimary', angle: width > height ? 90 : 0 } : undefined });
   await send('Emulation.setTouchEmulationEnabled', { enabled: touch, maxTouchPoints: 5 });
   // Waits until the game has finished loading. (Until then, window.game is the page's <div id="game">.)
+  // Checks start with every power already introduced, so its card doesn't hold the game. (abilitytest checks the card.)
+  const seen = () => evaluate(`(() => { const u = game.scene.getScene('ui'); if (u) u.introduced = new Set(['hard', 'calm', 'rage']); return true; })()`);
   const ready = async () => {
     for (let i = 0; i < 60; i++) {
-      if (await evaluate(`!!window.game?.scene?.getScene?.('game')?.sys?.isActive()`).catch(() => false)) return;
+      if (await evaluate(`!!window.game?.scene?.getScene?.('game')?.sys?.isActive()`).catch(() => false)) return seen();
       await sleep(250);
     }
     throw new Error('the game never finished loading');
