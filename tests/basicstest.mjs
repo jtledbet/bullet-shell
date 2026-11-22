@@ -46,9 +46,11 @@ check('rage button trembles when ready', jitter > 3, jitter);
 await evaluate(`${G}.useAbility()`); await sleep(120);
 check('using it: a ring and its name', (await evaluate(`${G}.powerFx.commandBuffer.length`)) > 0 && (await uiTexts()).filter((x) => x === 'burst').length === 2, await uiTexts());
 await shot('power.png');
-await evaluate(`(() => { const s = ${G}; s.traits = { hard: 0, calm: 3, rage: 0 }; s.lastTrait = 'calm'; s.abilityCooldown = 0; s.fireCooldown = 1e9; s.bullets.getChildren().forEach(b => b.disableBody(true, true)); s.enemies.getChildren().filter(e => e.active).forEach(e => { e.setData('speed', 90); e.setData('hp', 1e9); }); })()`); await sleep(300);
+// No new arrivals: one spawned this frame stands still until the next, which would read as not chasing.
+await evaluate(`(() => { const s = ${G}; s.traits = { hard: 0, calm: 3, rage: 0 }; s.lastTrait = 'calm'; s.abilityCooldown = 0; s.fireCooldown = 1e9; s.spawnTimer = 1e9; s.bullets.getChildren().forEach(b => b.disableBody(true, true)); s.enemies.getChildren().filter(e => e.active).forEach(e => { e.setData('speed', 90); e.setData('hp', 1e9); }); })()`); await sleep(300);
 const off = () => evaluate(`(() => { const s = ${G}; return s.enemies.getChildren().filter(e => e.active).map(e => { const a = Math.atan2(e.body.velocity.y, e.body.velocity.x) - Math.atan2(s.player.y - e.y, s.player.x - e.x); return +Math.abs(Math.atan2(Math.sin(a), Math.cos(a))).toFixed(2); }); })()`);
-check('enemies chase you normally', (await off()).every((a) => a < 0.05), await off());
+const offDetail = () => evaluate(`(() => { const s = ${G}; return s.enemies.getChildren().filter(e => e.active).map(e => { const a = Math.atan2(e.body.velocity.y, e.body.velocity.x) - Math.atan2(s.player.y - e.y, s.player.x - e.x); const off = Math.abs(Math.atan2(Math.sin(a), Math.cos(a))); return off < 0.05 ? null : { off: +off.toFixed(2), mood: e.getData('mood'), knock: +(+e.getData('knock')).toFixed(2), lost: e.getData('lost'), nosy: e.getData('nosy'), sulk: e.getData('sulk'), speed: Math.round(Math.hypot(e.body.velocity.x, e.body.velocity.y)), d: Math.round(Math.hypot(s.player.x - e.x, s.player.y - e.y)) }; }).filter(Boolean); })()`);
+check('enemies chase you normally', (await off()).every((a) => a < 0.05), await offDetail());
 // Gather them within reach first: how many have arrived by now depends on spawn timing.
 await evaluate(`(() => { const s = ${G}; s.enemies.getChildren().filter(e => e.active).forEach((e, i) => e.setPosition(s.player.x + Math.cos(i) * 150, s.player.y + Math.sin(i) * 150)); s.useAbility(); s.player.y += 260; })()`); await sleep(400);
 const lost = await off();

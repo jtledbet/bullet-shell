@@ -56,7 +56,7 @@ const G = `game.scene.getScene('game')`;
 const st = () => evaluate(`(() => { const s = ${G}; return { tutorial: s.tutorial, mode: s.mode, anger: +s.anger.toFixed(2), size: +(s.player.scaleX * 4).toFixed(3), red: +s.angerOverlay.alpha.toFixed(2), hp: s.hp,
   readout: game.scene.getScene('ui').debugText?.text ?? null, enemyShots: s.enemyBullets.getChildren().filter(b => b.active).length }; })()`);
 const untilDone = async () => { for (let i = 0; i < 80 && (await st()).tutorial; i++) await sleep(100); };
-const setSprite = (mood, dx) => evaluate(`(() => { const s = ${G}; const e = s.enemies.getChildren().find(e => e.active); e.setData('mood', '${mood}'); e.body.reset(s.player.x + ${dx}, s.player.y); s.showMood(e, false); })()`);
+const setSprite = (mood, dx) => evaluate(`(() => { const s = ${G}; const e = s.enemies.getChildren().find(e => e.active); e.setData({ mood: '${mood}', nosy: false, sulk: 0 }); e.body.reset(s.player.x + ${dx}, s.player.y); s.showMood(e, false); })()`);
 const autoAims = () => evaluate(`(() => { const s = ${G}; s.enemies.getChildren().forEach(e => e.disableBody(true, true)); const e = s.enemies.get(); e.enableBody(true, s.player.x + 150, s.player.y, true, true); e.setScale(0.25).setCircle(48, 16, 16).setAlpha(1); e.setData({ hp: 99, speed: 0, knock: 0, mood: 'chase', absorb: 0, shootCd: 99 }); return true; })()`).then(() => sleep(300)).then(() => evaluate(`${G}.aimDirection(${G}.stats.range) !== null`));
 
 const seeds = () => evaluate(`${G}.enemies.getChildren().filter(e => e.active).map(e => ({ mood: e.getData('mood'), gen: e.getData('gen'), size: +(e.scaleX * 4).toFixed(2) }))`);

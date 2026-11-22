@@ -85,6 +85,49 @@ const angles = [];
 for (let i = 0; i < 5; i++) { angles.push((await seed()).angle); await sleep(50); }
 check('aggro trembles', new Set(angles.map((a) => a.toFixed(2))).size > 2 && angles.every((a) => Math.abs(a) <= 4.01), angles);
 
+// Nosy: an angry seed comes over curious, doesn't like what it finds, bolts, keeps away, then comes back angry.
+await evaluate(`import('/src/storage.ts').then(m => { m.setLabels(true); return true; })`);
+const nosySeed = async (d) => {
+  await evaluate(`${G}.scene.restart()`); await sleep(1500);
+  await evaluate(`(() => { const s = ${G}; s.enemies.getChildren().forEach(e => e.disableBody(true, true)); s.spawnSeed('aggro', s.player.x + ${d}, s.player.y, 0, true); })()`);
+  await sleep(100);
+};
+const ns = () => evaluate(`(() => { const s = ${G}, e = s.enemies.getChildren().find(o => o.active && o.getData('gen') === 0); if (!e) return null; const v = e.body.velocity; const t = s.thoughts.find(t => t.on === e);
+  return { mood: e.getData('mood'), nosy: e.getData('nosy'), sulk: +e.getData('sulk').toFixed(2), d: Math.round(Math.hypot(e.x - s.player.x, e.y - s.player.y)), speed: Math.round(Math.hypot(v.x, v.y)), angle: +e.angle.toFixed(2), thought: t?.text.visible ? t.text.text : null }; })()`);
+await nosySeed(260);
+let n0 = await ns();
+const nAngles = [];
+for (let i = 0; i < 5; i++) { nAngles.push((await ns()).angle); await sleep(50); }
+check('nosy: an angry seed that hides its temper (no tremble, thinks "?")', n0.mood === 'aggro' && n0.nosy && nAngles.every((a) => a === 0) && n0.thought === '?', { n0, nAngles });
+await sleep(2000);
+let n1 = await ns();
+check('it comes in to look you over', n1.d < n0.d - 30 && n1.nosy, { from: n0.d, to: n1.d });
+for (let i = 0; i < 60 && (await ns()).d >= 140; i++) await sleep(100);
+n1 = await ns();
+check('and wonders "what is that" as it gets close', n1.nosy && n1.thought === 'what is that', n1);
+for (let i = 0; i < 100 && (await ns()).nosy; i++) await sleep(50);
+n1 = await ns();
+check('close up it swears and bolts', !n1.nosy && n1.thought === '#@!%' && n1.speed > 200 && n1.sulk > 3, n1);
+await shot('nosy-bolts.png');
+await evaluate(`${G}.idleTime = 0`);
+await sleep(1500);
+n1 = await ns();
+const sAngles = [];
+for (let i = 0; i < 5; i++) { sAngles.push((await ns()).angle); await sleep(50); }
+check('then keeps its distance, trembling now', n1.d > 150 && n1.sulk > 0 && new Set(sAngles).size > 2, { n1, sAngles });
+for (let i = 0; i < 60 && (await ns()).sulk > 0; i++) await sleep(100);
+await evaluate(`${G}.idleTime = 0`);
+n0 = await ns(); await sleep(1000); n1 = await ns();
+check('until its anger brings it back at you', n0.sulk <= 0 && n1.d < n0.d - 40, { from: n0, to: n1 });
+for (let i = 0; i < 40 && (await evaluate(`${G}.traits.rage`)) === 0; i++) await sleep(150);
+check('and it can still be taken in: +1 rage', (await state()).traits.rage === 1, (await state()).traits);
+await nosySeed(260);
+await evaluate(`(() => { const s = ${G}; const e = s.enemies.getChildren().find(o => o.active); const b = s.bullets.get(); b.enableBody(true, e.x, e.y, true, true); b.setData({ pierce: 0, life: 1, hits: new Set() }); s.onBulletHit(b, e); return true; })()`);
+await sleep(100);
+n1 = await ns();
+check('shoot a nosy one and it drops the act at once', n1.mood === 'aggro' && !n1.nosy && n1.sulk === 0 && n1.thought === '!', n1);
+await evaluate(`import('/src/storage.ts').then(m => { m.setLabels(false); return true; })`);
+
 // Idle: irritated seeds bump (no damage) and the tutorial ends in hell with a hard point.
 await fresh('curious', 200);
 const hp0 = (await state()).hp;

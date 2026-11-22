@@ -239,6 +239,18 @@ const WARY_CREEP_SPEED = 75;
 const STILL_EPSILON = 0.5;
 const TREMBLE_DEG = 4;
 /**
+ * Some angry seeds come over curious first: they bob in to have a look, wondering aloud. Up close
+ * they don't like what they find, swear, bolt, and keep their distance for a while, until their
+ * anger brings them back.
+ */
+const NOSY_CHANCE = 0.5;
+const NOSY_APPROACH = 30;
+const NOSY_TURN = 60;
+const NOSY_BOLT_SPEED = 300;
+const NOSY_BOLT_SECONDS = 0.7;
+const NOSY_SULK_SECONDS = 4;
+const rollNosy = (mood: Mood) => mood === 'aggro' && Math.random() < NOSY_CHANCE;
+/**
  * Orientation, before the player has ever done anything: gentle nudges at these idle seconds.
  * The control hint glows again, then the nearest seed gives a small pulse, then one quiet word.
  * They stop for good at the first input, and all come before the seeds get irritated.
@@ -898,8 +910,10 @@ export class GameScene extends Phaser.Scene {
         const e = obj as Sprite;
         if (!e.active) continue;
         const mood = e.getData('mood') as Mood;
-        const words = mood === 'aggro' ? THOUGHTS.angry : mood === 'skeptical' ? THOUGHTS.wary : THOUGHTS.curious;
-        this.think(e, words, { held: true, shake: mood === 'aggro', seconds: 0.25 });
+        // A nosy angry seed looks just as curious as a curious one, until it gets close.
+        const angry = mood === 'aggro' && !e.getData('nosy');
+        const words = angry ? THOUGHTS.angry : mood === 'skeptical' ? THOUGHTS.wary : THOUGHTS.curious;
+        this.think(e, words, { held: true, shake: angry, seconds: 0.25 });
       }
     }
     for (const t of this.thoughts) {
@@ -1038,7 +1052,7 @@ export class GameScene extends Phaser.Scene {
     if (this.idleTime >= IDLE_IRRITATE_SECONDS && !this.irritated) {
       this.irritated = true;
       for (const e of seeds) {
-        e.setData('irritated', true);
+        e.setData({ irritated: true, nosy: false, sulk: 0 });
         this.think(e, THOUGHTS.fedUp, { critical: true, shake: true, seconds: 2 });
         if (e.getData('mood') === 'aggro') continue;
         e.setData('mood', 'aggro');
@@ -1266,8 +1280,12 @@ export class GameScene extends Phaser.Scene {
       // While knocked back, keep the shove velocity instead of chasing.
       const knock = e.getData('knock') as number;
       const mood = e.getData('mood') as Mood;
-      e.setAngle(mood === 'aggro' ? Phaser.Math.FloatBetween(-TREMBLE_DEG, TREMBLE_DEG) : 0);
+      const nosy = mood === 'aggro' && e.getData('nosy');
+      // A nosy one hides its temper while it looks you over.
+      e.setAngle(mood === 'aggro' && !nosy ? Phaser.Math.FloatBetween(-TREMBLE_DEG, TREMBLE_DEG) : 0);
       if (knock > 0) e.setData('knock', knock - dt);
+      else if (nosy) this.steerNosy(e);
+      else if (mood === 'aggro' && e.getData('sulk') > 0) this.steerSulk(e, dt);
       else if (mood === 'curious') this.steerCurious(e);
       else if (mood === 'skeptical') {
         if (this.tutorial && this.stillFor >= WARY_TRUST_SECONDS) this.creepIn(e);
@@ -1389,6 +1407,33 @@ export class GameScene extends Phaser.Scene {
     this.physics.velocityFromRotation(toward, (d > CURIOUS_NEAR ? CURIOUS_DRIFT : 0) + bob, (e.body as Phaser.Physics.Arcade.Body).velocity);
   }
 
+  /** An angry seed come over curious: it bobs in to look you over, wondering aloud. Close up, it doesn't like what it sees: it swears and bolts. */
+  private steerNosy(e: Sprite) {
+    const d = Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y);
+    const body = e.body as Phaser.Physics.Arcade.Body;
+    if (d > NOSY_TURN) {
+      if (d < CURIOUS_CLOSER && !e.getData('noticed')) {
+        e.setData('noticed', true);
+        this.think(e, THOUGHTS.closer, { seconds: 2 });
+      }
+      const toward = Phaser.Math.Angle.Between(e.x, e.y, this.player.x, this.player.y);
+      const bob = CURIOUS_BOB * Math.sin((this.time.now / 1000) * 2.6 + (e.getData('phase') as number));
+      this.physics.velocityFromRotation(toward, NOSY_APPROACH + bob, body.velocity);
+      return;
+    }
+    e.setData({ nosy: false, sulk: NOSY_SULK_SECONDS, swore: true, knock: NOSY_BOLT_SECONDS, wander: 0 });
+    const away = Phaser.Math.Angle.Between(this.player.x, this.player.y, e.x, e.y);
+    this.physics.velocityFromRotation(away, NOSY_BOLT_SPEED, body.velocity);
+    this.think(e, THOUGHTS.angry, { critical: true, shake: true });
+    this.tweens.add({ targets: e, scaleX: e.scaleX * 0.8, duration: 70, yoyo: true, ease: 'Sine.Out' });
+  }
+
+  /** After bolting, it keeps its distance for a while (running if you come near), then its anger brings it back at you. */
+  private steerSulk(e: Sprite, dt: number) {
+    e.setData('sulk', (e.getData('sulk') as number) - dt);
+    this.steerWander(e, dt, true);
+  }
+
   /** A wary seed and a still core: it creeps in, stop-start, and settles inside you to be taken in. */
   private creepIn(e: Sprite) {
     if (!e.getData('creeping')) {
@@ -1468,12 +1513,15 @@ export class GameScene extends Phaser.Scene {
   private spawnTutorialEnemy() {
     const mood: Mood = Phaser.Utils.Array.GetRandom([...TUTORIAL_MOODS]);
     const a = Math.random() * Math.PI * 2;
-    this.spawnSeed(mood, this.player.x + Math.cos(a) * TUTORIAL_DISTANCE, this.player.y + Math.sin(a) * TUTORIAL_DISTANCE, 0);
+    this.spawnSeed(mood, this.player.x + Math.cos(a) * TUTORIAL_DISTANCE, this.player.y + Math.sin(a) * TUTORIAL_DISTANCE, 0, rollNosy(mood));
     this.notes.startMood = mood;
   }
 
-  /** A tutorial seed. Generation 0 is the first seed; generation 1 is a smaller brood seed that pops in. */
-  private spawnSeed(mood: Mood, x: number, y: number, gen: number) {
+  /**
+   * A tutorial seed. Generation 0 is the first seed; generation 1 is a smaller brood seed that pops in.
+   * A `nosy` angry seed comes over curious first (see NOSY_CHANCE).
+   */
+  private spawnSeed(mood: Mood, x: number, y: number, gen: number, nosy = false) {
     const e = this.enemies.get() as Sprite | null;
     if (!e) return;
     e.enableBody(true, x, y, true, true);
@@ -1482,6 +1530,7 @@ export class GameScene extends Phaser.Scene {
     e.setData({
       mood, gen, baseSize: gen ? BROOD_SIZE : 1, hp: gen ? BROOD_HP : 3, speed: AGGRO_SPEED, knock: 0, wander: 0, absorb: 0, tint: 0xffffff,
       phase: Math.random() * Math.PI * 2, near: false, irritated: false, lost: 0, noticed: false, swore: false, creeping: false,
+      nosy: mood === 'aggro' && nosy, sulk: 0,
     });
     this.showMood(e, false);
     if (!gen) return sfx.seed();
@@ -1502,7 +1551,7 @@ export class GameScene extends Phaser.Scene {
         if (!this.tutorial) return;
         const a = start + (i * Math.PI * 2) / moods.length + Phaser.Math.FloatBetween(-0.4, 0.4);
         const d = Phaser.Math.FloatBetween(...BROOD_DISTANCE);
-        this.spawnSeed(mood, this.player.x + Math.cos(a) * d, this.player.y + Math.sin(a) * d, 1);
+        this.spawnSeed(mood, this.player.x + Math.cos(a) * d, this.player.y + Math.sin(a) * d, 1, rollNosy(mood));
       });
     });
   }
@@ -1615,11 +1664,12 @@ export class GameScene extends Phaser.Scene {
       this.uncharm(e);
       e.setData('lost', 0);
     }
-    // Shooting a seed in orientation aggravates it.
-    if (this.tutorial && e.getData('mood') !== 'aggro') {
-      this.notes.shotWhileCalm = true;
-      e.setData({ mood: 'aggro', swore: true });
-      this.showMood(e, true);
+    // Shooting a seed in orientation aggravates it. An angry one that was only looking, or keeping away, drops the act.
+    const calm = e.getData('mood') !== 'aggro';
+    if (this.tutorial && (calm || e.getData('nosy') || e.getData('sulk') > 0)) {
+      if (calm) this.notes.shotWhileCalm = true;
+      e.setData({ mood: 'aggro', swore: true, nosy: false, sulk: 0 });
+      if (calm) this.showMood(e, true);
       // A startled "!", then it finds its words.
       this.think(e, THOUGHTS.shot, { critical: true, seconds: 0.7 });
       this.time.delayedCall(700, () => e.active && this.think(e, THOUGHTS.angry, { critical: true, shake: true }));
@@ -1902,7 +1952,7 @@ export class GameScene extends Phaser.Scene {
       if (!e.active) continue;
       const d2 = Phaser.Math.Distance.Squared(e.x, e.y, p.x, p.y);
       if (d2 < CROWD_RADIUS * CROWD_RADIUS) crowd++;
-      if (this.tutorial && e.getData('mood') === 'aggro' && d2 < 220 * 220) threat = 1;
+      if (this.tutorial && e.getData('mood') === 'aggro' && !e.getData('nosy') && d2 < 220 * 220) threat = 1;
       if (d2 < best) {
         best = d2;
         lx = e.x - p.x;
