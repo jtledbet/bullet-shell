@@ -10,3 +10,8 @@ export const POWER = {
   /** The mouse button that does the same, also named on that card. */
   mouse: 'right-click',
 };
+
+export const FULLSCREEN = {
+  /** KeyboardEvent.code. Listened for on the page itself: browsers only allow fullscreen from inside the key press. */
+  code: 'KeyF',
+};

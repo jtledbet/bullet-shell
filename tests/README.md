@@ -40,7 +40,8 @@ hold the game mid-check. `abilitytest` and `tiptest` clear that to check the car
 | `desktoptest` | The power's place and key on desktop, fullscreen, space to pause |
 | `startest` | The grid in orientation and the starfield after it |
 | `cornertest` | The pause and fullscreen buttons fading back |
-| `orbtest` | The build orb in the pause menu |
+| `orbtest` | The build orb in the pause menu (live game only) |
+| `fstest` | Fullscreen: the button and F ask for it; clicking it or pause fires nothing |
 | `rotatetest` | The "turn your phone" screen |
 | `devtest` | The developer switches and speed readout, and that `?dev` lasts only for that visit |
 | `tiptest` | Explanations: on cards, on the power's card (closed with E), and on hover (it also runs `tipcards` at phone size) |

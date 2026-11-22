@@ -80,6 +80,8 @@ export class UIScene extends Phaser.Scene {
   /** Only where fullscreen is supported. */
   private fsBtn?: Phaser.GameObjects.Container;
   private fsIcon?: Phaser.GameObjects.Graphics;
+  /** When the press now holding the mouse began on a button (its Pointer.downTime). That press belongs to the button: the game doesn't aim or fire with it. */
+  buttonPressAt = -1;
   private cornerTimer?: Phaser.Time.TimerEvent;
   private tipBox?: Phaser.GameObjects.Container;
   private tipTimer?: Phaser.Time.TimerEvent;
@@ -170,12 +172,17 @@ export class UIScene extends Phaser.Scene {
         toggleFullscreen();
         this.wakeCorner();
       });
-      this.tip(fsBg, 'Fullscreen, on or off.');
+      this.tip(fsBg, 'Fullscreen, on or off. F does the same.');
       this.fsBtn = this.add.container(0, 0, [fsBg, this.fsIcon]).setDepth(150);
       this.drawFsIcon();
       document.addEventListener('fullscreenchange', this.drawFsIcon);
       this.events.once('shutdown', () => document.removeEventListener('fullscreenchange', this.drawFsIcon));
     }
+
+    // Every button has a hand cursor. The hover areas (health bar, minimap) don't, so holding fire over them still works.
+    this.input.on('gameobjectdown', (p: Phaser.Input.Pointer, obj: Phaser.GameObjects.GameObject) => {
+      if (obj.input?.cursor) this.buttonPressAt = p.downTime;
+    });
 
     this.wakeCorner();
     // A mouse coming near them brings them back.

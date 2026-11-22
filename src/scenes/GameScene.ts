@@ -1052,8 +1052,8 @@ export class GameScene extends Phaser.Scene {
     if (sticks?.aiming && sticks.aim.lengthSq() > 0) return this.aimVec.copy(sticks.aim).normalize();
 
     const p = this.input.activePointer;
-    // Left button only: right-click does nothing (for now).
-    if (!p.wasTouch && p.leftButtonDown()) {
+    // Left button only, and not a press that began on a button (fullscreen, pause, the power).
+    if (!p.wasTouch && p.leftButtonDown() && p.downTime !== this.ui.buttonPressAt) {
       const world = p.positionToCamera(this.cameras.main) as Vec;
       return this.aimVec.set(world.x - this.player.x, world.y - this.player.y).normalize();
     }

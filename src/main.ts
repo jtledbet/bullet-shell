@@ -3,6 +3,7 @@ import { audioState, playCounts } from './audio';
 import { musicState } from './music';
 import { lowerQuality, pixelRatio } from './display';
 import { canFullscreen, toggleFullscreen } from './fullscreen';
+import { FULLSCREEN } from './controls';
 import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
 import { UIScene } from './scenes/UIScene';
@@ -75,6 +76,13 @@ const rotateFull = document.getElementById('rotate-full');
 if (rotateFull) {
   if (canFullscreen()) rotateFull.addEventListener('click', toggleFullscreen);
   else rotateFull.remove();
+}
+
+// F toggles fullscreen on a keyboard, like the corner button.
+if (canFullscreen()) {
+  window.addEventListener('keydown', (e) => {
+    if (e.code === FULLSCREEN.code && !e.repeat && !e.ctrlKey && !e.metaKey && !e.altKey) toggleFullscreen();
+  });
 }
 
 // Dev-only handle for poking at state from the console or test scripts.
