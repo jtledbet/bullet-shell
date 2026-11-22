@@ -513,7 +513,7 @@ export class UIScene extends Phaser.Scene {
       return [
         this.title('Paused', h * 0.25),
         ...this.menuButton('Resume', h * 0.47, onResume, { tip: 'Back to it. Esc, P and Space do the same.' }),
-        ...this.menuButton('Restart', h * 0.68, onRestart, { dx: -PAIR_OFFSET, tip: 'Give up this run and start over from orientation.' }),
+        ...this.menuButton('reorient', h * 0.68, onRestart, { dx: -PAIR_OFFSET, tip: 'Give up this run and start over from orientation.' }),
         ...this.exitButton(h * 0.68),
         ...this.resumeCorner(onResume),
         ...this.buildOrb(),

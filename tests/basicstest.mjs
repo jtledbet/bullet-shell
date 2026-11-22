@@ -64,6 +64,7 @@ const pb = await uiPoint(`u.pauseBtn`);
 await click(pb.x, pb.y); await sleep(700);
 check('tap pause: paused', await evaluate(`${G}.paused`), pb);
 await shot('pause.png');
+check('pause offers "reorient", not "restart"', (await menuTexts()).includes('reorient') && !(await menuTexts()).includes('restart'), await menuTexts());
 check('labels on, no ?dev: the version shows, the speed readout does not', !(await menuTexts()).some((x) => / fps /.test(x)) && (await menuTexts()).some((x) => /^v\d+\.\d+\.\d+ /.test(x)), (await menuTexts()).slice(-3));
 await click(pb.x, pb.y); await sleep(400);
 check('tap the same spot again: resumed', !(await evaluate(`${G}.paused`)));
