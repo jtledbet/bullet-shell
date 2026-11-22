@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import type { UIScene } from './UIScene';
 import { POWER } from '../controls';
+import { devLog } from '../devlog';
 import { Face } from '../face';
 import { sfx } from '../audio';
 import { pixelRatio, TEX_SCALE } from '../display';
@@ -723,6 +724,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private onFocusLost() {
+    devLog('game: focus lost, pausing');
     this.releaseKeys();
     this.pauseGame();
   }
@@ -759,6 +761,7 @@ export class GameScene extends Phaser.Scene {
 
   private pauseGame() {
     if (this.frozen) return;
+    devLog('game: paused');
     this.frozen = this.paused = true;
     this.physics.pause();
     this.time.paused = true;

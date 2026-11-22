@@ -4,6 +4,7 @@ import { sfx } from '../audio';
 import { POWER } from '../controls';
 import { pixelRatio } from '../display';
 import { canFullscreen, toggleFullscreen } from '../fullscreen';
+import { devLog } from '../devlog';
 import { refreshMusic } from '../music';
 import { bestRun, devFlareOn, devOn, devShotgunOn, isMuted, labelsOn, setDevFlare, setDevShotgun, setLabels, setMuted } from '../storage';
 import { POWER_NAMES, POWER_TIPS, TRAIT_COLOURS, type Trait } from '../traits';
@@ -167,7 +168,9 @@ export class UIScene extends Phaser.Scene {
     if (canFullscreen()) {
       const fsBg = this.add.rectangle(0, 0, 44, 44, 0x1e293b, 0.7).setStrokeStyle(2, 0x334155);
       this.fsIcon = this.add.graphics();
-      fsBg.setInteractive({ useHandCursor: true }).on('pointerup', (p: Phaser.Input.Pointer) => {
+      fsBg.setInteractive({ useHandCursor: true }).on('pointerdown', (p: Phaser.Input.Pointer) => devLog(`fullscreen button down (${p.wasTouch ? 'touch' : 'mouse'})`));
+      fsBg.on('pointerup', (p: Phaser.Input.Pointer) => {
+        devLog(`fullscreen button up (${p.wasTouch ? 'touch' : `mouse button ${p.button}`})`);
         if (p.button !== 0) return;
         toggleFullscreen();
         this.wakeCorner();

@@ -4,8 +4,28 @@ let t = await open({ out: process.argv[2] + '-a', port: 9349, url: 'http://127.0
 await t.evaluate(`${t.G}.pauseGame()`); await t.sleep(500);
 t.check('without ?dev: no shotgun switch in the pause menu', !(await t.menuTexts()).some((x) => x.startsWith('shotgun')), await t.menuTexts());
 t.check('and no speed readout, but the version is there', !(await t.menuTexts()).some((x) => / fps /.test(x)) && (await t.menuTexts()).some((x) => /^v\d+\.\d+\.\d+ /.test(x)), (await t.menuTexts()).slice(-3));
+t.check('and no event log', !(await t.evaluate(`!!document.getElementById('devlog')`)));
 await t.evaluate(`location.assign('http://127.0.0.1:5173/?fullres&dev')`); await t.sleep(4000); await t.ready();
 const { evaluate, click, check, sleep, G, uiPoint, menuTexts, shot } = t;
+// The event log, for phone-only fullscreen bugs.
+const logText = () => evaluate(`document.getElementById('devlog')?.innerText ?? ''`);
+const lg = await evaluate(`(() => { const b = document.getElementById('devlog'); return b ? { taps: getComputedStyle(b).pointerEvents, text: b.innerText } : null; })()`);
+check('with ?dev: an event log on the page that never takes a tap', lg && lg.taps === 'none' && lg.text.includes('log started'), lg);
+const frames = async () => +(/^frames (\d+)/.exec(await logText())?.[1] ?? -1);
+const f0 = await frames(); await sleep(600);
+check('its frame count climbs while the game runs', (await frames()) > f0 && f0 >= 0, { f0, f1: await frames() });
+// Headless Chrome can't enter fullscreen, so the request is answered here.
+await evaluate(`(() => { document.documentElement.requestFullscreen = () => Promise.resolve(); return true; })()`);
+const fsb = await uiPoint(`u.fsBtn`);
+await click(fsb.x, fsb.y); await sleep(400);
+// (Only the missing lines are printed: the log can hold the browser's own error names, which the runner would read as a failure.)
+const missing = async (want) => { const text = await logText(); return want.filter((x) => !text.includes(x)); };
+let miss = await missing(['fullscreen button down (mouse)', 'fullscreen button up (mouse button 0)', 'toggle: asking for fullscreen', 'fullscreen granted', 'landscape lock']);
+check('a tap on fullscreen is logged, with what the browser said', miss.length === 0, { missing: miss });
+await evaluate(`document.dispatchEvent(new Event('fullscreenchange'))`); await sleep(300);
+miss = await missing(['fullscreenchange: now not fullscreen', 'game: paused']);
+check('leaving fullscreen is logged, and the pause it causes', miss.length === 0, { missing: miss });
+await shot('dev-log.png');
 await evaluate(`${G}.pauseGame()`); await sleep(600);
 check('with ?dev: the switch is there, off', (await menuTexts()).includes('shotgun: off'), await menuTexts());
 check('and the speed readout shows', (await menuTexts()).some((x) => / fps /.test(x)), (await menuTexts()).slice(-3));

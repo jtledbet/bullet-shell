@@ -4,6 +4,7 @@ import { musicState } from './music';
 import { lowerQuality, pixelRatio } from './display';
 import { canFullscreen, toggleFullscreen } from './fullscreen';
 import { FULLSCREEN } from './controls';
+import { startDevLog } from './devlog';
 import { BootScene } from './scenes/BootScene';
 import { GameScene } from './scenes/GameScene';
 import { UIScene } from './scenes/UIScene';
@@ -47,6 +48,9 @@ function fit() {
   if (w !== game.scale.width || h !== game.scale.height) game.scale.resize(w, h);
 }
 game.events.on(Phaser.Core.Events.POST_STEP, fit);
+
+// `?dev`: an on-page log of fullscreen, focus, size and error events (see devlog.ts).
+game.events.once(Phaser.Core.Events.READY, () => startDevLog(game));
 
 // A machine that can't keep up: when frames stay slow for several seconds, draw fewer pixels.
 // `?fullres` turns this off (test scripts use it).
