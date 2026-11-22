@@ -18,10 +18,9 @@ const MAP_RANGE = 1400;
 const MENU_ARM_MS = 400;
 /** The HUD is hidden during the tutorial, then snaps in when the fight starts. */
 const HUD_SNAP_MS = 140;
-/** The build orb at the foot of the pause menu: ember-warm when it leads to the preview build, plasma-pale when it leads back. */
+/** The build orb at the foot of the live game's pause menu: ember-warm, leading to the preview build. */
 const ORB_SIZE = 26;
 const ORB_TO_NEXT = 0xffb866;
-const ORB_TO_LIVE = 0xd8ccff;
 /** The pause and fullscreen buttons show plainly for this long, then fade back so they don't cover the field. */
 const CORNER_AWAKE_MS = 3000;
 const CORNER_REST_ALPHA = 0.2;
@@ -536,20 +535,20 @@ export class UIScene extends Phaser.Scene {
   }
 
   /**
-   * A small glowing orb at the foot of the pause menu. On the live game it leads to the preview
-   * build (/next/); on the preview build it leads back. With labels on, it says which.
+   * A small glowing orb at the foot of the pause menu, on the live game only: it leads to the
+   * preview build (/next/). With labels on, it says so. The preview has none (Max's call): one
+   * there led back to the live game, dropping players out of fullscreen onto an older build.
    */
   private buildOrb() {
-    const onNext = window.location.pathname.includes('/next/');
+    this.orb = undefined;
+    if (window.location.pathname.includes('/next/')) return [];
     const x = this.w / 2;
     const y = this.h - 30;
     const zone = this.add.rectangle(x, y, 48, 48, 0x000000, 0.001);
-    this.orb = this.add.image(x, y, 'orb').setTint(onNext ? ORB_TO_LIVE : ORB_TO_NEXT).setDisplaySize(ORB_SIZE, ORB_SIZE);
-    this.makeButton(zone, () => window.location.assign(new URL(onNext ? '../' : 'next/', window.location.href).href));
-    this.tip(zone, onNext ? 'Back to the finished game.' : 'The next build: newer, and less tested.');
-    const caption = labelsOn()
-      ? [this.label(x + ORB_SIZE / 2 + 8, y, onNext ? 'live' : 'next', { fontSize: '13px', color: '#94a3b8' }).setOrigin(0, 0.5)]
-      : [];
+    this.orb = this.add.image(x, y, 'orb').setTint(ORB_TO_NEXT).setDisplaySize(ORB_SIZE, ORB_SIZE);
+    this.makeButton(zone, () => window.location.assign(new URL('next/', window.location.href).href));
+    this.tip(zone, 'The next build: newer, and less tested.');
+    const caption = labelsOn() ? [this.label(x + ORB_SIZE / 2 + 8, y, 'next', { fontSize: '13px', color: '#94a3b8' }).setOrigin(0, 0.5)] : [];
     return [zone, this.orb, ...caption];
   }
 
