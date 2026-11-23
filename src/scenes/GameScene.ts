@@ -9,6 +9,7 @@ import { lullHum, restHum, setDanger, setHum, setPauseMusic } from '../music';
 import { bestRun, devFlareOn, devShotgunOn, labelsOn, recordRun, setDev, setLabels } from '../storage';
 import { CORE_COLOURS, CORE_WHITE, POWER_NAMES, TRAIT_COLOURS, type Trait } from '../traits';
 import { baseStats, rollUpgrades, type Stats } from '../upgrades';
+import { priceOf, rerollPrice, rollShop, SHOP_OFFERS, type ShopItem } from '../shop';
 
 type Sprite = Phaser.Physics.Arcade.Sprite;
 type Vec = Phaser.Math.Vector2;
@@ -137,6 +138,8 @@ const LULL_MAGNET = 3;
 const LULL_LEAVE_SECONDS = 2.5;
 /** A merged gem grows with its worth, up to this many times its size. */
 const GEM_MAX_GROWTH = 2.5;
+/** Gems still on the ground fade over the lull's last seconds, then are gone when the shop opens. */
+const GEM_FADE_SECONDS = 2;
 /** How often the minimap is redrawn, in seconds. */
 const MAP_REFRESH = 0.1;
 /** Draw scale for the oversized textures. Body sizes passed to setCircle are in texture pixels. */
@@ -438,12 +441,31 @@ export interface HudState {
    * down) and the direction to the nearest gem. Null while a gem is visible, or there are none.
    */
   gemArrow: { px: number; py: number; angle: number } | null;
+  /** Gems in hand: the shop's money. */
+  gems: number;
   /** The HUD stays hidden during the tutorial. */
   tutorial: boolean;
   /** Which way orientation went. The count reads "kills" in bullet hell and "souls" otherwise. */
   hell: boolean;
   /** The right-click ability: which trait drives it and how recharged it is (1 = ready). Null without traits. */
   ability: { trait: Trait; charge: number } | null;
+}
+
+/** What the shop screen shows. */
+export interface ShopView {
+  /** Gems in hand. */
+  gems: number;
+  /** The offers, priced; null where one has been bought. */
+  offers: ((ShopItem & { price: number }) | null)[];
+  /** What the next reroll costs. */
+  reroll: number;
+}
+
+/** What the shop screen can ask for. `buy` and `reroll` return whether it happened. */
+export interface ShopActions {
+  buy(i: number): boolean;
+  reroll(): boolean;
+  next(): void;
 }
 
 /** A thought over a seed's or enemy's head. */
@@ -493,6 +515,12 @@ export class GameScene extends Phaser.Scene {
   private xp = 0;
   private level = 1;
   private kills = 0;
+  /** Gems in hand, to spend in the shop. */
+  private purse = 0;
+  /** Shops opened this run, rerolls made in the current one, and its offers (null once bought). */
+  private shops = 0;
+  private rerolls = 0;
+  private offers: (ShopItem | null)[] = [];
   private elapsed = 0;
   private fireCooldown = 0;
   private shotgunCooldown = 0;
@@ -583,6 +611,8 @@ export class GameScene extends Phaser.Scene {
     const resume = data?.resume ?? null;
     this.stats = baseStats();
     this.hp = this.stats.maxHp;
+    this.purse = this.shops = this.rerolls = 0;
+    this.offers = [];
     this.xp = this.kills = this.elapsed = this.fireCooldown = this.shotgunCooldown = this.flareCooldown = this.invuln = this.pendingLevels = 0;
     this.blastId = this.hitStop = this.gridKick = 0;
     this.impactBlast = -1;
@@ -972,6 +1002,7 @@ export class GameScene extends Phaser.Scene {
       kills: this.kills,
       elapsed: this.elapsed,
       gemArrow: this.gemArrow(),
+      gems: this.purse,
       tutorial: this.tutorial,
       hell: this.mode === 'hell',
       ability: this.abilityHud(),
@@ -1243,8 +1274,13 @@ export class GameScene extends Phaser.Scene {
       lullHum(lull);
       // Each one gets its own moment to leave, so they thin out rather than vanish together.
       if (lull) for (const obj of this.enemies.getChildren()) (obj as Sprite).setData('leave', Math.random() * LULL_LEAVE_SECONDS);
+      // The lull is over: the shop, before the next wave.
+      else return this.openShop();
     }
     if (!lull) return;
+    // The gems still lying about fade over the lull's last seconds: get them while you can.
+    const left = WAVE_SECONDS + LULL_SECONDS - (this.elapsed % (WAVE_SECONDS + LULL_SECONDS));
+    if (left < GEM_FADE_SECONDS) for (const obj of this.gems.getChildren()) (obj as Sprite).setAlpha(left / GEM_FADE_SECONDS);
     const view = this.cameras.main.worldView;
     for (const obj of this.enemies.getChildren()) {
       const e = obj as Sprite;
@@ -1411,7 +1447,7 @@ export class GameScene extends Phaser.Scene {
       const e = obj as Sprite;
       if (!e.active) continue;
       if (Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y) < this.charmRadius()) {
-        e.setData({ lost: CHARM_SECONDS + Phaser.Math.FloatBetween(0, 0.6), charmed: true, absorb: 0, caught: 0, spreads: CHARM_SPREADS });
+        e.setData({ lost: CHARM_SECONDS + this.stats.charmLonger + Phaser.Math.FloatBetween(0, 0.6), charmed: true, absorb: 0, caught: 0, spreads: CHARM_SPREADS });
         this.think(e, THOUGHTS.baffled, { critical: true });
       } else {
         e.setData({ lost: this.phaseSeconds() + Phaser.Math.FloatBetween(1, 2.2), charmed: false });
@@ -1680,6 +1716,8 @@ export class GameScene extends Phaser.Scene {
           this.heal(back);
         }
         if (Math.random() < MOTE_CHANCE) this.dropMote(e.x + 8, e.y - 6);
+        // Experience comes straight from the kill; the gem it leaves is money for the shop.
+        this.gainXp(1);
       }
       return true;
     }
@@ -1767,7 +1805,9 @@ export class GameScene extends Phaser.Scene {
 
   /** What one of your shots does right now: the stat, grown a little by every level. */
   private shotDamage() {
-    return this.stats.damage * (1 + LEVEL_DAMAGE * (this.level - 1));
+    // Spite: so much more for every tenth of energy missing.
+    const hurt = 1 + this.stats.spite * 10 * (1 - this.hp / this.stats.maxHp);
+    return this.stats.damage * (1 + LEVEL_DAMAGE * (this.level - 1)) * hurt;
   }
 
   /** A bolt that lands without killing knocks its target back a touch along the bolt's path. */
@@ -2190,7 +2230,7 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     // Hard: hits do less damage, and much less while braced.
-    const armor = 1 - HARD_ARMOR * this.trait('hard');
+    const armor = (1 - HARD_ARMOR * this.trait('hard')) * this.stats.toughness;
     this.hp -= this.hitDamage() * armor * (this.braceLeft > 0 ? this.braceLets() : 1);
     this.invuln = INVULN_SECONDS;
     this.face.react('hit');
@@ -2252,7 +2292,7 @@ export class GameScene extends Phaser.Scene {
     const g = this.gems.get() as Sprite | null;
     if (!g) return this.mergeGem();
     g.enableBody(true, x, y, true, true);
-    g.setScale(SPRITE_SCALE).setDepth(3).setBlendMode(Phaser.BlendModes.NORMAL).setData({ worth: 1, born: this.elapsed });
+    g.setScale(SPRITE_SCALE).setDepth(3).setAlpha(1).setBlendMode(Phaser.BlendModes.NORMAL).setData({ worth: 1, born: this.elapsed });
   }
 
   /**
@@ -2295,11 +2335,75 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** A gem goes into the purse (and, with Mending Gems, gives a little energy back). */
   private onGem(g: Sprite) {
     if (!g.active) return;
     g.disableBody(true, true);
     sfx.gem();
-    this.gainXp(g.getData('worth') ?? 1);
+    const worth = (g.getData('worth') as number) ?? 1;
+    this.purse += worth;
+    if (this.stats.gemHeal) this.heal(worth * this.stats.gemHeal);
+  }
+
+  /**
+   * The shop, when a wave's lull ends. The game holds. Gems left on the ground are gone (Purse
+   * keeps a share of their worth), and four offers wait, leaning toward what the core has become.
+   */
+  private openShop() {
+    let left = 0;
+    for (const obj of this.gems.getChildren()) {
+      const g = obj as Sprite;
+      if (!g.active) continue;
+      left += (g.getData('worth') as number) ?? 1;
+      g.disableBody(true, true);
+    }
+    this.purse += Math.floor(left * this.stats.keepGems);
+    this.shops++;
+    this.rerolls = 0;
+    this.offers = rollShop(SHOP_OFFERS, this.stats, this.strongestTrait());
+    this.frozen = true;
+    this.physics.pause();
+    restHum(true);
+    this.ui.updateHud(this.hudState());
+    this.ui.showShop(() => this.shopView(), {
+      buy: (i) => this.buy(i),
+      reroll: () => this.reroll(),
+      next: () => this.closeShop(),
+    });
+  }
+
+  private shopView(): ShopView {
+    return {
+      gems: this.purse,
+      offers: this.offers.map((o) => o && { ...o, price: priceOf(o, this.shops) }),
+      reroll: rerollPrice(this.shops, this.rerolls),
+    };
+  }
+
+  private buy(i: number) {
+    const item = this.offers[i];
+    if (!item || this.purse < priceOf(item, this.shops)) return false;
+    this.purse -= priceOf(item, this.shops);
+    item.apply(this.stats, { heal: (n) => this.heal(n) });
+    this.offers[i] = null;
+    this.face.react('joy');
+    return true;
+  }
+
+  private reroll() {
+    const price = rerollPrice(this.shops, this.rerolls);
+    if (this.purse < price) return false;
+    this.purse -= price;
+    this.rerolls++;
+    this.offers = rollShop(SHOP_OFFERS, this.stats, this.strongestTrait());
+    return true;
+  }
+
+  /** "next wave": the game goes on where it stopped. */
+  private closeShop() {
+    this.frozen = false;
+    this.physics.resume();
+    restHum(false);
   }
 
   private gainXp(n: number) {

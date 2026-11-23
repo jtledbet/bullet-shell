@@ -6,7 +6,7 @@ const t = await open({ out: out + '-desktop', port: 9362, url: 'http://127.0.0.1
   const { evaluate, shot, check, sleep, press, mouse, G, U, uiPoint } = t;
   // Unlock sound, so the hum can be heard resting.
   for (let i = 0; i < 20 && (await evaluate(`audioDebug().state`)) !== 'running'; i++) { await press('a', 'KeyA', 65); await sleep(400); }
-  await evaluate(`(() => { const s = ${G}; s.traits = { hard: 0, calm: 0, rage: 0 }; s.endTutorial('absorbed'); s.traits = { hard: 0, calm: 0, rage: 0 }; s.spawnTimer = 1e9; s.fireCooldown = 1e9; s.rescued = true; return true; })()`);
+  await evaluate(`(() => { const s = ${G}; s.traits = { hard: 0, calm: 0, rage: 0 }; s.endTutorial('absorbed'); s.traits = { hard: 0, calm: 0, rage: 0 }; s.spawnTimer = 1e9; s.fireCooldown = 1e9; s.rescued = true; s.level = 40; return true; })()`);
   await sleep(600);
 
   // ---- Balance: hits grow with the run, healing has a ceiling, cards add rather than multiply, levels come slower.
@@ -17,7 +17,7 @@ const t = await open({ out: out + '-desktop', port: 9362, url: 'http://127.0.0.1
   check('two Heavy Rounds add half the starting damage each (2.8, not 3.15)', cards.damage === 2.8, cards);
   check('two Quick Triggers add a quarter of the starting rate each (4.5)', cards.fireRate === 4.5, cards);
   const lv = await evaluate(`(() => { const s = ${G}; const was = s.level; s.level = 10; const need = s.xpToNext(); s.level = 11; const dmg = +(s.shotDamage() / s.stats.damage).toFixed(3); s.level = was; return { need, dmg }; })()`);
-  check('level 10 needs 158 gems (it was 111)', lv.need === 158, lv);
+  check('level 10 needs 158 experience (it was 111)', lv.need === 158, lv);
   check('each level adds 4% to shot damage', lv.dmg === 1.4, lv);
   const tough = await evaluate(`(() => { const s = ${G}; s.enemies.getChildren().forEach(e => e.disableBody(true, true)); s.elapsed = 900; for (let i = 0; i < 30; i++) s.spawnEnemy(); const hs = s.enemies.getChildren().filter(e => e.active).map(e => e.getData('hp')); s.enemies.getChildren().forEach(e => e.disableBody(true, true)); s.elapsed = 5; return { lo: Math.min(...hs), hi: Math.max(...hs) }; })()`);
   // (3 + 900/25) * 1.03^30 = 94.7, times a spread of 0.75 to 1.35.
@@ -37,8 +37,8 @@ const t = await open({ out: out + '-desktop', port: 9362, url: 'http://127.0.0.1
     return { active: act.length, total: act.reduce((n, g) => n + g.getData('worth'), 0), firstWorth: first.getData('worth'), bigger: first.scaleX > act[1].scaleX, add: first.blendMode === Phaser.BlendModes.ADD }; })()`);
   check('the ground still holds 600, and the 10 extra are not lost', merge.active === 600 && merge.total === 610, merge);
   check('they went into the oldest one, which grew and brightened', merge.firstWorth === 11 && merge.bigger && merge.add, merge);
-  const pick = await evaluate(`(() => { const s = ${G}; s.level = 30; s.xp = 0; const g = s.gems.getChildren().find(o => o.active && o.getData('worth') === 11); s.onGem(g); const r = s.xp; s.level = 1; s.xp = 0; return r; })()`);
-  check('picking it up gives all 11', pick === 11, pick);
+  const pick = await evaluate(`(() => { const s = ${G}; s.purse = 0; const g = s.gems.getChildren().find(o => o.active && o.getData('worth') === 11); s.onGem(g); const r = s.purse; s.purse = 0; return r; })()`);
+  check('picking it up gives all 11 gems', pick === 11, pick);
   await evaluate(`${G}.gems.getChildren().forEach(g => g.disableBody(true, true))`);
 
   // ---- Waves: a minute of enemies, then ten seconds where none come.
@@ -59,7 +59,10 @@ const t = await open({ out: out + '-desktop', port: 9362, url: 'http://127.0.0.1
   check('nothing new arrives', left.all === left.near + left.far, left);
   check('the ones out of sight drift off; the ones on screen stay', left.near === 3 && left.far === 0 && left.lull, left);
   await shot('lull.png');
+  // The lull ends in the shop (shoptest covers it); leave it for the next wave.
   await evaluate(`${G}.elapsed = 69.7`); await sleep(900);
+  check('when the lull ends, the shop opens', await evaluate(`${G}.frozen && ${G}.shops === 1`));
+  await evaluate(`(() => { ${U}.closeMenu(); ${G}.closeShop(); return true; })()`); await sleep(600);
   check('when the next wave starts the hum comes back', await humIn());
   check('and so do enemies', (await evaluate(`${G}.enemies.countActive()`)) > 3);
 

@@ -18,6 +18,16 @@ export interface Stats {
   flareEvery: number;
   /** Multiplies a flare's blast damage; its reach grows with the square root of this. */
   flarePower: number;
+  /** Shop: the share of the gems still on the ground that you keep when a wave's lull ends. */
+  keepGems: number;
+  /** Shop: health each gem restores, per point of its worth. */
+  gemHeal: number;
+  /** Shop: extra damage for every 10% of energy missing (0.05 is +5%). */
+  spite: number;
+  /** Shop: what a hit still takes after every other cut (1 is all of it). */
+  toughness: number;
+  /** Shop: seconds added to how long a charm holds. */
+  charmLonger: number;
 }
 
 export const baseStats = (): Stats => ({
@@ -35,6 +45,11 @@ export const baseStats = (): Stats => ({
   leech: 0,
   flareEvery: 0,
   flarePower: 1,
+  keepGems: 0,
+  gemHeal: 0,
+  spite: 0,
+  toughness: 1,
+  charmLonger: 0,
 });
 
 export interface UpgradeContext {
@@ -122,6 +137,10 @@ export const UPGRADES: Upgrade[] = [
     tip: 'Whatever you destroy gives a little of itself back to you, though only so much each second. Take it again to draw more.',
     apply: (s) => (s.leech += 1),
   },
+];
+
+/** The weapons and what improves them. Sold in the shop between waves, not offered on level-up. */
+export const WEAPON_CARDS: Upgrade[] = [
   {
     name: 'Flare',
     desc: 'New weapon: a bursting flare',

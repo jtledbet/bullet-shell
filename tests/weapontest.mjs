@@ -28,7 +28,7 @@ await evaluate(`${G}.level = 1`); await clear();
 
 // --- The flare.
 check('no flare until its card', (await evaluate(`${G}.stats.flareEvery`)) === 0);
-check('both flare cards exist, the second only once you have the first', await evaluate(`import('/src/upgrades.ts').then(m => { const base = m.baseStats(); const names = (s) => { const got = new Set(); for (let i = 0; i < 40; i++) m.rollUpgrades(50, s).forEach(u => got.add(u.name)); return got; }; const a = names(base); const b = names({ ...base, flareEvery: 3.5 }); return a.has('Flare') && !a.has('Brighter Flares') && !b.has('Flare') && b.has('Brighter Flares'); })`));
+check('the shop sells both flare items, the second only once you have the first', await evaluate(`Promise.all([import('/src/upgrades.ts'), import('/src/shop.ts')]).then(([u, m]) => { const base = u.baseStats(); const names = (s) => new Set(m.shopStock(s, null).map(x => x.name)); const a = names(base); const b = names({ ...base, flareEvery: 3.5 }); return a.has('Flare') && !a.has('Brighter Flares') && !b.has('Flare') && b.has('Brighter Flares'); })`));
 await evaluate(`(() => { const s = ${G}; s.stats.flareEvery = 3.5; s.flareCooldown = 0; window.__hp0 = s.hp; })()`);
 // A clump 200 away, one enemy off to the side out of the blast, one right behind you.
 await dummy(200, 0); await dummy(230, 30); await dummy(215, -40); await dummy(200, 170); await dummy(-120, 0);

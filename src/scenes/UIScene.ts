@@ -8,7 +8,7 @@ import { devLog } from '../devlog';
 import { refreshMusic } from '../music';
 import { bestRun, devFlareOn, devOn, devShotgunOn, isMuted, labelsOn, setDevFlare, setDevShotgun, setLabels, setMuted } from '../storage';
 import { POWER_NAMES, POWER_TIPS, TRAIT_COLOURS, type Trait } from '../traits';
-import type { HudState, MapState } from './GameScene';
+import type { HudState, MapState, ShopActions, ShopView } from './GameScene';
 import type { Upgrade } from '../upgrades';
 
 const PAD = 32; // clears rounded corners and notches in landscape
@@ -44,6 +44,9 @@ const FONT = 'system-ui, sans-serif';
 const SITE_URL = 'https://ledsec.dev/games/';
 /** Half the centre-to-centre gap between two side-by-side menu buttons. */
 const PAIR_OFFSET = 98;
+/** The shop: the gap between its cards, and the room kept clear above them for the corner buttons. */
+const SHOP_GAP = 12;
+const SHOP_TOP_MIN = 76;
 
 /** An explanation, plain or with a bold title over it. */
 type TipText = string | { title: string; text: string };
@@ -147,8 +150,8 @@ export class UIScene extends Phaser.Scene {
     if (!this.sys.game.device.input.touch) {
       const shown = (text: string) => () => (this.hudShown && !this.menu ? text : '');
       this.hpZone = this.tip(this.add.zone(PAD, PAD - 6, 260, 24).setOrigin(0).setInteractive(), shown('Your energy. Hits take it, and so does every shot you fire. Firing alone can never take the last of it.'));
-      this.xpZone = this.tip(this.add.zone(0, 0, 100, 10).setOrigin(0).setInteractive(), shown('Gems fill this. When it is full you gain a level and choose a card.'));
-      this.mapZone = this.tip(this.add.zone(-999, -999, MAP_R * 2, MAP_R * 2).setInteractive(), shown('A map of what is around you. Green dots are gems, for leveling up. White dots are energy, which heals you. Red dots are enemies.'));
+      this.xpZone = this.tip(this.add.zone(0, 0, 100, 10).setOrigin(0).setInteractive(), shown('Kills and souls fill this. When it is full you gain a level and choose a card.'));
+      this.mapZone = this.tip(this.add.zone(-999, -999, MAP_R * 2, MAP_R * 2).setInteractive(), shown('A map of what is around you. Green dots are gems, to spend in the shop. White dots are energy, which heals you. Red dots are enemies.'));
     }
 
     // The ability button: tap (or right-click anywhere on desktop). Hidden until the core has a trait.
@@ -292,7 +295,7 @@ export class UIScene extends Phaser.Scene {
     g.fillStyle(0x1e293b).fillRect(0, 0, w, 5);
     g.fillStyle(0x4ade80).fillRect(0, 0, (s.xp / s.xpNext) * w, 5);
 
-    this.info.setText(`lv ${s.level}   ${clock(s.elapsed)}   ${s.kills} ${s.hell ? 'kills' : 'souls'}`);
+    this.info.setText(`lv ${s.level}   ${clock(s.elapsed)}   ${s.kills} ${s.hell ? 'kills' : 'souls'}   ${s.gems} gems`);
     this.drawRadar(s.gemArrow);
     this.drawAbility(s.ability);
   }
@@ -525,6 +528,60 @@ export class UIScene extends Phaser.Scene {
     return items;
   }
 
+  /** The shop between waves: the offers, a reroll, and the way on. Buying or rerolling redraws it in place. */
+  showShop(view: () => ShopView, act: ShopActions) {
+    this.openMenu(() => this.shopItems(view(), act));
+  }
+
+  private shopItems(v: ShopView, act: ShopActions) {
+    const { w, h } = this;
+    const n = Math.max(1, v.offers.length);
+    const cardW = Math.min(210, (w - PAD * 2 - SHOP_GAP * (n - 1)) / n);
+    const cardH = Math.min(250, h - 156);
+    const top = Math.max(SHOP_TOP_MIN, (h - cardH) / 2 - 10);
+    const span = n * cardW + (n - 1) * SHOP_GAP;
+    const redraw = () => this.buildMenu();
+    const items: Phaser.GameObjects.GameObject[] = [this.title('shop', top - 40)];
+    v.offers.forEach((o, i) => {
+      const x = w / 2 + (i - (n - 1) / 2) * (cardW + SHOP_GAP);
+      const y = top + cardH / 2;
+      // Bought: an empty place.
+      if (!o) return items.push(this.add.rectangle(x, y, cardW, cardH, 0x0f172a, 0.5).setStrokeStyle(1, 0x334155));
+      const afford = v.gems >= o.price;
+      // Each card wears the colour of the trait it leans to.
+      const colour = o.trait ? TRAIT_COLOURS[o.trait] : 0x5eead4;
+      const hex = `#${colour.toString(16).padStart(6, '0')}`;
+      const wrap = { width: cardW - 20 };
+      const card = this.add.rectangle(x, y, cardW, cardH, 0x1e293b).setStrokeStyle(2, colour, afford ? 1 : 0.35);
+      const name = this.label(x, top + 12, o.name, { fontSize: '17px', fontStyle: 'bold', color: '#f8fafc', align: 'center', wordWrap: wrap }).setOrigin(0.5, 0);
+      const desc = this.label(x, name.y + name.height + 8, o.desc, { fontSize: '14px', color: hex, align: 'center', wordWrap: wrap }).setOrigin(0.5, 0);
+      const tip = this.label(x, desc.y + desc.height + 8, o.tip, { fontSize: '12px', color: '#cbd5e1', align: 'center', wordWrap: wrap, lineSpacing: 2 }).setOrigin(0.5, 0);
+      const price = this
+        .label(x, top + cardH - 12, `${o.price} gems`, { fontSize: '16px', fontStyle: 'bold', color: afford ? '#4ade80' : '#64748b' })
+        .setOrigin(0.5, 1);
+      // On a small screen the plain-words line gives way rather than run into the price.
+      tip.setVisible(tip.y + tip.height < price.y - price.height - 6);
+      if (!afford) for (const t of [name, desc, tip]) t.setAlpha(0.5);
+      this.makeButton(card, () => {
+        if (act.buy(i)) sfx.gem();
+        redraw();
+      }, true);
+      items.push(card, name, desc, tip, price);
+    });
+    // Underneath: what you have, a reroll, and the next wave.
+    const by = top + cardH + 40;
+    items.push(this.label(w / 2 - span / 2, by, `${v.gems} gems`, { fontSize: '20px', fontStyle: 'bold', color: '#4ade80' }).setOrigin(0, 0.5));
+    const canReroll = v.gems >= v.reroll;
+    items.push(
+      ...this.menuButton(`reroll · ${v.reroll} gems`, by, () => {
+        if (act.reroll()) sfx.click();
+        redraw();
+      }, { dx: 0.001, quiet: !canReroll, keepOpen: true, height: 44, tip: 'New offers. Costs more each time.' }),
+      ...this.menuButton('next wave', by, () => act.next(), { dx: span / 2 - 90, height: 44, tip: 'Leave the shop. The next wave starts.' }),
+    );
+    return items;
+  }
+
   /** `onAgain` starts the next run right after orientation, as the same core; `onStart` goes back to the very beginning. */
   showGameOver(s: HudState, newBest: boolean, onAgain: (() => void) | null, onStart: () => void) {
     const text = `Survived ${clock(s.elapsed)}  ·  Level ${s.level}  ·  ${s.kills} ${s.hell ? 'kills' : 'souls'}`;
@@ -720,12 +777,17 @@ export class UIScene extends Phaser.Scene {
     return this.menuButton('Exit to site', y, () => window.location.assign(SITE_URL), { dx, quiet: true, tip: 'Leave the game for the games page.' });
   }
 
-  private menuButton(text: string, y: number, action: () => void, opts: { dx?: number; quiet?: boolean; tip?: string } = {}) {
+  private menuButton(
+    text: string,
+    y: number,
+    action: () => void,
+    opts: { dx?: number; quiet?: boolean; tip?: string; keepOpen?: boolean; height?: number } = {},
+  ) {
     const x = this.w / 2 + (opts.dx ?? 0);
     const width = opts.dx ? 180 : 200;
-    const btn = this.add.rectangle(x, y, width, 56, 0x1e293b).setStrokeStyle(2, opts.quiet ? 0x475569 : 0x5eead4);
+    const btn = this.add.rectangle(x, y, width, opts.height ?? 56, 0x1e293b).setStrokeStyle(2, opts.quiet ? 0x475569 : 0x5eead4);
     const label = this.label(x, y, text, { fontSize: '20px', color: opts.quiet ? '#cbd5e1' : '#f8fafc' }).setOrigin(0.5);
-    this.makeButton(btn, action);
+    this.makeButton(btn, action, opts.keepOpen);
     if (opts.tip) this.tip(btn, opts.tip);
     return [btn, label];
   }

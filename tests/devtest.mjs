@@ -3,7 +3,7 @@ import { open } from './cdp.mjs';
 let t = await open({ out: process.argv[2] + '-a', port: 9349, url: 'http://127.0.0.1:5173/?fullres', dsf: 1 });
 await t.evaluate(`${t.G}.pauseGame()`); await t.sleep(500);
 t.check('without ?dev: no shotgun switch in the pause menu', !(await t.menuTexts()).some((x) => x.startsWith('shotgun')), await t.menuTexts());
-t.check('and no speed readout, but the version is there', !(await t.menuTexts()).some((x) => / fps /.test(x)) && (await t.menuTexts()).some((x) => /^v\d+\.\d+\.\d+ /.test(x)), (await t.menuTexts()).slice(-3));
+t.check('and no speed readout, but the version is there', !(await t.menuTexts()).some((x) => / fps /.test(x)) && (await t.menuTexts()).some((x) => /^v\d+\.\d+\.\d+(-\w+)? /.test(x)), (await t.menuTexts()).slice(-3));
 t.check('and no event log', !(await t.evaluate(`!!document.getElementById('devlog')`)));
 await t.evaluate(`location.assign('http://127.0.0.1:5173/?fullres&dev')`); await t.sleep(4000); await t.ready();
 const { evaluate, click, check, sleep, G, uiPoint, menuTexts, shot } = t;

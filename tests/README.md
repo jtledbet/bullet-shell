@@ -35,7 +35,7 @@ hold the game mid-check. `abilitytest` and `tiptest` clear that to check the car
 | `coretest` | The core's colour and face, damage numbers, ghosting, seed thoughts |
 | `energytest` | Firing spends energy, motes, the Siphon card, the red power's blast |
 | `charmtest` | Charm: taking enemies in, how it spreads, how it ends, "souls" and "kills" |
-| `weapontest` | Shot damage and growth, the flare, its cards, the developer switch |
+| `weapontest` | Shot damage and growth, the flare, its shop items, the developer switch |
 | `rescuetest` | The second wind offered to new players |
 | `desktoptest` | The power's place and key on desktop, fullscreen, space to pause |
 | `startest` | The grid in orientation and the starfield after it |
@@ -51,6 +51,7 @@ hold the game mid-check. `abilitytest` and `tiptest` clear that to check the car
 | `tutfixtest` | Orientation's endings, sounds and temperament tells |
 | `traitstest` | What each trait does |
 | `broodtest` | The brood that follows the first angry seed |
+| `shoptest` | The shop between waves: kills give experience, gems are money, gems fading and the shop opening when the lull ends, buying, rerolls, the new items, and the layout at two phone sizes (it runs `shopphone`) |
 
 Two more are tools, not checks: `perftest` (frame times and where the time goes) and
 `flareshot` (a screenshot of a flare bursting).

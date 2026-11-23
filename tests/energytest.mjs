@@ -11,7 +11,7 @@ await evaluate(`(() => { const s = ${G}; s.enemies.getChildren().forEach(e => e.
 check('orientation: firing costs nothing', (await hp()) === 100, await hp());
 
 // --- The run: every volley and blast spends a little.
-await evaluate(`(() => { const s = ${G}; s.endTutorial('absorbed'); s.traits = { hard: 0, calm: 0, rage: 0 }; s.spawnTimer = 1e9; })()`); await sleep(300);
+await evaluate(`(() => { const s = ${G}; s.endTutorial('absorbed'); s.traits = { hard: 0, calm: 0, rage: 0 }; s.spawnTimer = 1e9; s.xpToNext = () => 1e9; })()`); await sleep(300);
 await evaluate(`(() => { const s = ${G}; s.spawnEnemy(); const e = s.enemies.getChildren().find(o => o.active); e.setData('hp', 1e9); e.setData('speed', 0); e.setPosition(s.player.x + 200, s.player.y); window.__f0 = s.hp; })()`);
 await sleep(3000);
 const spent = await evaluate(`+(window.__f0 - ${G}.hp).toFixed(2)`);

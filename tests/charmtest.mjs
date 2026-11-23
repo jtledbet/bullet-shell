@@ -14,7 +14,7 @@ const foes = () => evaluate(`(() => { const s = ${G}; return s.enemies.getChildr
 const me = () => evaluate(`(() => { const s = ${G}; return { hp: +s.hp.toFixed(1), xp: s.xp, count: s.kills, level: s.level }; })()`);
 
 await setup('heaven'); await sleep(300);
-check('heaven path: the count reads "souls"', (await evaluate(`${U}.info.text`)).endsWith('0 souls'), await evaluate(`${U}.info.text`));
+check('heaven path: the count reads "souls"', (await evaluate(`${U}.info.text`)).includes('   0 souls   '), await evaluate(`${U}.info.text`));
 await evaluate(`${G}.useAbility()`); await sleep(1800);
 let f = await foes();
 check('ghosting charms the four nearby', f.length === 4 && f.every((e) => e.charmed), f);
@@ -33,7 +33,7 @@ f = await foes();
 check('holding against one takes it in', !f.some((e) => e.tag === 0) && after.count === before.count + 1, { before, after });
 check('that gives back 3 energy and a point of experience', Math.abs(after.hp - before.hp - 3) < 0.2 && (after.xp === before.xp + 1 || after.level > before.level), { before, after });
 if (await evaluate(`!!${U}.menu`)) { await evaluate(`(() => { const u = ${U}; const s = ${G}; s.pendingLevels = 0; s.frozen = false; s.physics.resume(); u.closeMenu(); })()`); }
-check('the count now reads 1 soul(s)', (await evaluate(`${U}.info.text`)).endsWith('1 souls'), await evaluate(`${U}.info.text`));
+check('the count now reads 1 soul(s)', (await evaluate(`${U}.info.text`)).includes('   1 souls   '), await evaluate(`${U}.info.text`));
 
 // Charm is catching: a charmed enemy that bumps an uncharmed one passes it on, and that one peels away.
 await evaluate(`(() => { const s = ${G}; s.spawnEnemy(); const fresh = s.enemies.getChildren().find(o => o.active && o.getData('tag') === undefined || o.active && !o.getData('charmed') && o.getData('tag') !== 1 && o.getData('tag') !== 2 && o.getData('tag') !== 3);
@@ -69,7 +69,7 @@ check('and then touching one hurts again', (await me()).hp < hpNow, { hpNow, now
 // Hell path wording.
 await evaluate(`${G}.scene.restart({})`); await sleep(1300);
 await setup('hell'); await sleep(300);
-check('hell path: the count reads "kills"', (await evaluate(`${U}.info.text`)).endsWith('0 kills'), await evaluate(`${U}.info.text`));
+check('hell path: the count reads "kills"', (await evaluate(`${U}.info.text`)).includes('   0 kills   '), await evaluate(`${U}.info.text`));
 await evaluate(`${G}.gameOver()`); await sleep(600);
 check('game over uses the same word', (await menuTexts()).some((x) => x.endsWith('0 kills')), await menuTexts());
 t.done();

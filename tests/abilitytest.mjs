@@ -52,7 +52,8 @@ const ab = () => evaluate(`(() => { const u = ${U}, a = u.ability, r = game.canv
   return { vis: a.visible, x: r.left + a.x * k, y: r.top + a.y * k, cd: ${G}.abilityCooldown, card: !!u.powerCard, frozen: ${G}.frozen }; })()`);
 let a = await ab();
 check('tutorial: no button', !a.vis, a);
-await evaluate(`(() => { const s = ${G}; s.endTutorial(); s.enemies.getChildren().forEach(e => e.disableBody(true, true)); })()`);
+// Kills give experience: no level-up card mid-check (an instance property outlives restarts).
+await evaluate(`(() => { const s = ${G}; s.endTutorial(); s.xpToNext = () => 1e9; s.enemies.getChildren().forEach(e => e.disableBody(true, true)); })()`);
 await sleep(300);
 a = await ab();
 check('fight, no traits: no button', !a.vis, a);

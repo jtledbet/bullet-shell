@@ -13,7 +13,7 @@ if ! curl -s -o /dev/null http://127.0.0.1:5173/; then
   exit 1
 fi
 
-all="basicstest coretest energytest charmtest weapontest rescuetest desktoptest startest cornertest orbtest rotatetest devtest tiptest wavetest powertest abilitytest tutfixtest traitstest broodtest fstest"
+all="basicstest coretest energytest charmtest weapontest rescuetest desktoptest startest cornertest orbtest rotatetest devtest tiptest wavetest powertest abilitytest tutfixtest traitstest broodtest fstest shoptest"
 failed=""
 for name in ${@:-$all}; do
   echo "== $name"

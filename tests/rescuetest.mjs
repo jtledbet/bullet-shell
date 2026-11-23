@@ -2,7 +2,7 @@ import { open } from './cdp.mjs';
 const t = await open({ out: process.argv[2], port: 9354, url: 'http://127.0.0.1:5173/?fullres', dsf: 2 });
 const { evaluate, shot, check, sleep, click, G, U, uiPoint, menuTexts } = t;
 // A fresh browser profile: no best run saved, so this player counts as new.
-const run = () => evaluate(`(() => { const s = ${G}; s.endTutorial('absorbed'); s.traits = { hard: 0, calm: 0, rage: 0 }; s.spawnTimer = 1e9; s.fireCooldown = 1e9; return true; })()`);
+const run = () => evaluate(`(() => { const s = ${G}; s.endTutorial('absorbed'); s.traits = { hard: 0, calm: 0, rage: 0 }; s.spawnTimer = 1e9; s.fireCooldown = 1e9; s.xpToNext = () => 1e9; return true; })()`);
 const crowd = (n) => evaluate(`(() => { const s = ${G}; for (let i = 0; i < ${n}; i++) { s.spawnEnemy(); const e = s.enemies.getChildren().filter(o => o.active).pop(); e.setPosition(s.player.x + Math.cos(i) * (120 + i * 12), s.player.y + Math.sin(i) * (90 + i * 6)); e.setData('speed', 0); } return true; })()`);
 const hit = () => evaluate(`(() => { const s = ${G}; s.invuln = 0; s.onPlayerHit(); return +s.hp.toFixed(1); })()`);
 const me = () => evaluate(`(() => { const s = ${G}; return { hp: +s.hp.toFixed(1), frozen: s.frozen, rescued: s.rescued, shield: +s.shield.toFixed(1), foes: s.enemies.getChildren().filter(e => e.active).length }; })()`);
