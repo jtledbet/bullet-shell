@@ -1,6 +1,23 @@
 import Phaser from 'phaser';
 import { TEX_SCALE as S } from '../display';
 
+/** An ember's colours: its haze (inner, outer), body (centre to rim) and eyes (centre to edge). */
+interface EmberLook {
+  haze: [string, string];
+  body: [string, string, string, string];
+  eyes: [string, string, string];
+}
+const EMBER: EmberLook = {
+  haze: ['rgba(255,90,40,0.5)', 'rgba(255,60,30,0)'],
+  body: ['#2a0806', '#5c0f0a', '#c2321a', '#ff7a3d'],
+  eyes: ['rgba(255,240,190,1)', 'rgba(255,190,90,1)', 'rgba(255,120,40,0)'],
+};
+const CHARMED: EmberLook = {
+  haze: ['rgba(125,211,252,0.55)', 'rgba(96,165,250,0)'],
+  body: ['#0b2545', '#1e4fa8', '#38bdf8', '#bae6fd'],
+  eyes: ['rgba(255,255,255,1)', 'rgba(224,242,254,1)', 'rgba(186,230,253,0)'],
+};
+
 /** Generates placeholder textures so the prototype needs no art files. */
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -44,7 +61,9 @@ export class BootScene extends Phaser.Scene {
       [1, 'rgba(120,180,255,0)'],
     ]);
 
-    this.ember();
+    this.ember('enemy', EMBER);
+    // A charmed enemy turns blue, like a ghost in Pac-Man that you can eat.
+    this.ember('enemy-charmed', CHARMED);
     // A spark that drifts off the embers.
     this.glow('fleck', 4, [
       [0, 'rgba(255,236,170,1)'],
@@ -56,8 +75,8 @@ export class BootScene extends Phaser.Scene {
     this.bolt('bolt', ['rgba(255,255,255,1)', 'rgba(255,255,255,0.85)', 'rgba(255,255,255,0)'], 'rgba(255,255,255,0.55)');
     // Shotgun pellets: hot sparks.
     this.bolt('spark', ['rgba(255,255,235,1)', 'rgba(255,190,90,0.9)', 'rgba(255,110,40,0)'], 'rgba(255,140,60,0.6)');
-    // Enemy shots: small embers.
-    this.emberShot();
+    // Enemy shots: hot magenta, a colour nothing else in the game wears, so they never pass for an enemy.
+    this.enemyShot();
     // The flare: a slow, heavy knot of the core's energy that bursts among enemies. White, so it takes the core's colour.
     this.glow('flare', 24, [
       [0, 'rgba(255,255,255,1)'],
@@ -78,31 +97,31 @@ export class BootScene extends Phaser.Scene {
    * Enemies: a smouldering ember. A dark coal body that runs hot toward its rim, a faint
    * heat haze around it, and two glowing eyes. Toughness darkens it further with a tint.
    */
-  private ember() {
+  private ember(key: string, look: EmberLook) {
     const px = 32 * S;
     const c = px / 2;
-    const canvas = this.textures.createCanvas('enemy', px, px)!;
+    const canvas = this.textures.createCanvas(key, px, px)!;
     const ctx = canvas.getContext();
     const haze = ctx.createRadialGradient(c, c, 10 * S, c, c, 16 * S);
-    haze.addColorStop(0, 'rgba(255,90,40,0.5)');
-    haze.addColorStop(1, 'rgba(255,60,30,0)');
+    haze.addColorStop(0, look.haze[0]);
+    haze.addColorStop(1, look.haze[1]);
     ctx.fillStyle = haze;
     ctx.fillRect(0, 0, px, px);
     // Slightly off-centre, so the coal looks lit from within rather than flat.
     const body = ctx.createRadialGradient(c - 2 * S, c + 1 * S, 0, c, c, 12 * S);
-    body.addColorStop(0, '#2a0806');
-    body.addColorStop(0.6, '#5c0f0a');
-    body.addColorStop(0.86, '#c2321a');
-    body.addColorStop(1, '#ff7a3d');
+    body.addColorStop(0, look.body[0]);
+    body.addColorStop(0.6, look.body[1]);
+    body.addColorStop(0.86, look.body[2]);
+    body.addColorStop(1, look.body[3]);
     ctx.fillStyle = body;
     ctx.beginPath();
     ctx.arc(c, c, 12 * S, 0, Math.PI * 2);
     ctx.fill();
     for (const ex of [12, 20]) {
       const eye = ctx.createRadialGradient(ex * S, 13 * S, 0, ex * S, 13 * S, 3.2 * S);
-      eye.addColorStop(0, 'rgba(255,240,190,1)');
-      eye.addColorStop(0.55, 'rgba(255,190,90,1)');
-      eye.addColorStop(1, 'rgba(255,120,40,0)');
+      eye.addColorStop(0, look.eyes[0]);
+      eye.addColorStop(0.55, look.eyes[1]);
+      eye.addColorStop(1, look.eyes[2]);
       ctx.fillStyle = eye;
       ctx.beginPath();
       ctx.arc(ex * S, 13 * S, 3.2 * S, 0, Math.PI * 2);
@@ -142,22 +161,22 @@ export class BootScene extends Phaser.Scene {
     canvas.refresh();
   }
 
-  /** An enemy's shot: a chip off the ember, dark at the core, hot at the rim, in a faint haze. */
-  private emberShot() {
+  /** An enemy's shot: a white-hot centre in a magenta shell and haze. */
+  private enemyShot() {
     const px = 16 * S;
     const c = px / 2;
-    const canvas = this.textures.createCanvas('ember-shot', px, px)!;
+    const canvas = this.textures.createCanvas('enemy-shot', px, px)!;
     const ctx = canvas.getContext();
     const haze = ctx.createRadialGradient(c, c, 3 * S, c, c, 8 * S);
-    haze.addColorStop(0, 'rgba(255,90,40,0.6)');
-    haze.addColorStop(1, 'rgba(255,60,30,0)');
+    haze.addColorStop(0, 'rgba(240,80,220,0.7)');
+    haze.addColorStop(1, 'rgba(217,70,239,0)');
     ctx.fillStyle = haze;
     ctx.fillRect(0, 0, px, px);
     const body = ctx.createRadialGradient(c, c, 0, c, c, 4.5 * S);
-    body.addColorStop(0, '#3a0a07');
-    body.addColorStop(0.55, '#8a1a0e');
-    body.addColorStop(0.85, '#e0461f');
-    body.addColorStop(1, '#ffb066');
+    body.addColorStop(0, '#fff2fb');
+    body.addColorStop(0.4, '#ff8ae0');
+    body.addColorStop(0.8, '#ec38d0');
+    body.addColorStop(1, '#c026d3');
     ctx.fillStyle = body;
     ctx.beginPath();
     ctx.arc(c, c, 4.5 * S, 0, Math.PI * 2);

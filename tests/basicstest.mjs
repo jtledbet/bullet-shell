@@ -33,7 +33,7 @@ const shots = await evaluate(`${G}.bullets.getChildren().filter(b => b.active).m
 check('bolt and spark: textured, turned to face their flight, body on the head', shots.length === 2 && shots[0].key === 'bolt' && shots[1].key === 'spark' && shots[0].rot === 0.7 && shots[1].rot === -2.2 && shots.every((b) => b.off < 1 && b.add), shots);
 await evaluate(`(() => { const s = ${G}; for (let i = 0; i < 10; i++) s.shoot(i * 0.63, 60, 5, i % 2 === 0); s.mode = 'hell'; for (let i = 0; i < 6; i++) s.spawnEnemy(); s.enemies.getChildren().filter(e => e.active).forEach((e, i) => { e.setPosition(s.player.x + Math.cos(i) * 170, s.player.y + Math.sin(i) * 110); e.setData('shootCd', 0); e.setData('speed', 0); }); })()`); await sleep(700);
 const es = await evaluate(`${G}.enemyBullets.getChildren().filter(b => b.active).map(b => b.texture.key)`);
-check('enemy shots are embers', es.length >= 3 && es.every((k) => k === 'ember-shot'), es);
+check('enemy shots wear their own magenta, not ember colours', es.length >= 3 && es.every((k) => k === 'enemy-shot'), es);
 await shot('ammo.png');
 
 // --- Power: ring, caption with labels on; phasing makes enemies lose you.

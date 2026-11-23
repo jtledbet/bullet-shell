@@ -94,6 +94,34 @@ const CHARM_SPREADS = 2;
 const CHARM_STEPS = 3;
 const CHARM_MIN_LEFT = 0.8;
 const CHARM_RECOIL_SECONDS = 0.5;
+/**
+ * Pac-Man's rule, so phase reads at a glance: a charmed enemy turns blue, and in its last
+ * CHARM_BLINK seconds it blinks white, faster near the end. While anything is charmed (or you
+ * are phasing) the core wears a blue outline, which blinks too as the last charm runs out.
+ */
+const CHARM_BLINK = 1.5;
+/** Whether a charm with this many seconds left is in its white half-beat: 3.5 blinks a second, then 6 in the last 0.6 s. */
+const charmBlink = (left: number) => left > 0 && left < CHARM_BLINK && Math.floor(left * (left < 0.6 ? 12 : 7)) % 2 === 0;
+/** Taking one in: it is pulled into the core's middle at this speed (at least), shrinking as it goes. */
+const TAKE_PULL = 420;
+const TAKE_SHRINK = 0.65;
+/** Then the core gulps: it swells by this much and settles back, over this long. */
+const GULP_SWELL = 0.3;
+const GULP_SECONDS = 0.3;
+/**
+ * While you fire, a small reticle sits on what you are shooting at: auto-aim's pick, the held
+ * mouse, or this far out along the right stick. It fades in and out at this rate.
+ */
+const RETICLE_R = 11;
+const RETICLE_STICK = 130;
+const RETICLE_FADE = 14;
+/**
+ * A thin arc under the core for the power: it drains while brace or phase runs, fills as the
+ * power recharges, then shows full for a moment and fades once it is ready again.
+ */
+const ARC_SPAN = 1.9;
+const ARC_GAP = 8;
+const ARC_FADE_SECONDS = 0.7;
 /** Damage numbers: how many at once, how far they rise, how long they last. Damage shows times ten (a base hit reads "10"). */
 const DAMAGE_POOL = 24;
 const DAMAGE_RISE = 26;
@@ -580,6 +608,19 @@ export class GameScene extends Phaser.Scene {
   private outcome: Outcome | null = null;
   private powerFx!: Phaser.GameObjects.Graphics;
   private charmFx!: Phaser.GameObjects.Graphics;
+  /** The core's blue outline while anything is charmed, and the longest charm still running (0 for none). */
+  private charmEdge!: Phaser.GameObjects.Graphics;
+  private charmLeft = 0;
+  /** 1 just after taking one in, easing to 0: the core's gulp. */
+  private gulp = 0;
+  private reticle!: Phaser.GameObjects.Graphics;
+  private reticleAlpha = 0;
+  private readonly reticleAt = new Phaser.Math.Vector2();
+  private readonly aimSpot = new Phaser.Math.Vector2();
+  /** The power's arc under the core, how long the running power lasts in all, and the arc's fade once ready. */
+  private powerArc!: Phaser.GameObjects.Graphics;
+  private powerFull = 1;
+  private arcFade = 0;
   private irritated = false;
   private bumps = 0;
   private bumpLeft = 0;
@@ -640,6 +681,7 @@ export class GameScene extends Phaser.Scene {
     this.absorbing = 0;
     this.heyed = false;
     this.abilityCooldown = this.phaseLeft = this.braceLeft = 0;
+    this.charmLeft = this.gulp = this.reticleAlpha = this.arcFade = 0;
     setPauseMusic(false);
     setHum(true);
     this.physics.resume();
@@ -682,6 +724,9 @@ export class GameScene extends Phaser.Scene {
     }).setDepth(4.5);
     this.setAnger(0);
     this.hardEdge = this.add.graphics().setDepth(12);
+    this.charmEdge = this.add.graphics().setDepth(12);
+    this.powerArc = this.add.graphics().setDepth(12);
+    this.reticle = this.add.graphics().setDepth(5.5);
     this.face = new Face(this, 10.6);
     const small = { fontFamily: 'system-ui, sans-serif', resolution: pixelRatio() * 2 };
     this.thoughts = Array.from({ length: THOUGHT_POOL }, () => ({
@@ -702,7 +747,7 @@ export class GameScene extends Phaser.Scene {
 
     this.enemies = this.physics.add.group({ defaultKey: 'enemy', maxSize: 400 });
     this.bullets = this.physics.add.group({ defaultKey: 'bolt', maxSize: 300 });
-    this.enemyBullets = this.physics.add.group({ defaultKey: 'ember-shot', maxSize: 300 });
+    this.enemyBullets = this.physics.add.group({ defaultKey: 'enemy-shot', maxSize: 300 });
     this.gems = this.physics.add.group({ defaultKey: 'gem', maxSize: 600 });
     this.motes = this.physics.add.group({ defaultKey: 'mote', maxSize: 120 });
     this.flares = this.physics.add.group({ defaultKey: 'flare', maxSize: 24 });
@@ -857,6 +902,7 @@ export class GameScene extends Phaser.Scene {
     this.fire(dt);
     this.fireShotgun(dt);
     this.fireFlare(dt);
+    this.drawReticle(dt);
     this.spawn(dt);
     this.waves(dt);
     // Siphon's allowance refills steadily, up to one second's worth.
@@ -875,6 +921,12 @@ export class GameScene extends Phaser.Scene {
     const flicker = this.invuln > 0 && Math.floor(this.invuln * 12) % 2 ? 0.35 : 1;
     this.player.setAlpha(this.ghostAlpha() * flicker * (this.phaseLeft > 0 ? 0.35 : 1));
     this.drawHardEdge();
+    this.drawCharmEdge();
+    this.drawPowerArc(dt);
+    if (this.gulp > 0) {
+      this.gulp = Math.max(0, this.gulp - dt / GULP_SECONDS);
+      this.sizeCore();
+    }
     this.updateCore(dt);
     this.shedFlecks(dt);
     this.angerOverlay.setPosition(this.player.x, this.player.y).setAlpha(ANGER_RED * this.anger * this.player.alpha);
@@ -1121,14 +1173,24 @@ export class GameScene extends Phaser.Scene {
 
   /** Manual aim (right stick or held mouse) wins; otherwise auto-aim at the nearest enemy in range. */
   private aimDirection(range: number): Vec | null {
+    const at = this.aimTarget(range);
+    if (!at) return null;
+    return this.aimVec.set(at.x - this.player.x, at.y - this.player.y).normalize();
+  }
+
+  /** Where you are aiming: a point out along the right stick, the held mouse, or the enemy auto-aim picks. Null when not firing. */
+  private aimTarget(range: number): Vec | null {
     const sticks = this.ui.sticks;
-    if (sticks?.aiming && sticks.aim.lengthSq() > 0) return this.aimVec.copy(sticks.aim).normalize();
+    if (sticks?.aiming && sticks.aim.lengthSq() > 0) {
+      const a = this.aimVec.copy(sticks.aim).normalize();
+      return this.aimSpot.set(this.player.x + a.x * RETICLE_STICK, this.player.y + a.y * RETICLE_STICK);
+    }
 
     const p = this.input.activePointer;
     // Left button only, and not a press that began on a button (fullscreen, pause, the power).
     if (!p.wasTouch && p.leftButtonDown() && p.downTime !== this.ui.buttonPressAt) {
       const world = p.positionToCamera(this.cameras.main) as Vec;
-      return this.aimVec.set(world.x - this.player.x, world.y - this.player.y).normalize();
+      return this.aimSpot.set(world.x, world.y);
     }
 
     // No auto-aim during the tutorial (the first enemy is shot by hand) or in bullet hell (always by hand).
@@ -1136,7 +1198,25 @@ export class GameScene extends Phaser.Scene {
     // Never auto-fire at something the player can't see.
     const target = this.nearestEnemy(range, this.cameras.main.worldView);
     if (!target) return null;
-    return this.aimVec.set(target.x - this.player.x, target.y - this.player.y).normalize();
+    return this.aimSpot.set(target.x, target.y);
+  }
+
+  /** While you fire, a small turning reticle on what you are shooting at, so you never fire blind. Not in orientation. */
+  private drawReticle(dt: number) {
+    const g = this.reticle.clear();
+    const at = this.tutorial ? null : this.aimTarget(this.stats.range);
+    this.reticleAlpha += ((at ? 1 : 0) - this.reticleAlpha) * (1 - Math.exp(-RETICLE_FADE * dt));
+    // It glides from target to target, but appears where it is needed.
+    if (at) this.reticleAt.lerp(at, this.reticleAlpha < 0.1 ? 1 : 1 - Math.exp(-30 * dt));
+    if (this.reticleAlpha < 0.02) return;
+    const { x, y } = this.reticleAt;
+    const a = 0.85 * this.reticleAlpha;
+    g.lineStyle(1.5, 0xf8fafc, a).strokeCircle(x, y, RETICLE_R);
+    const turn = this.time.now / 700;
+    for (let i = 0; i < 4; i++) {
+      const t = turn + (i * Math.PI) / 2;
+      g.lineBetween(x + Math.cos(t) * (RETICLE_R - 4), y + Math.sin(t) * (RETICLE_R - 4), x + Math.cos(t) * (RETICLE_R + 4), y + Math.sin(t) * (RETICLE_R + 4));
+    }
   }
 
   /**
@@ -1312,7 +1392,7 @@ export class GameScene extends Phaser.Scene {
     if (!e) return;
     e.enableBody(true, x, y, true, true);
     this.forget(e);
-    e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false).setAlpha(1).setAngle(0);
+    e.setTexture('enemy').setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false).setAlpha(1).setAngle(0);
     // Darker red means tougher.
     const hp = (3 + this.elapsed / 25) * Math.pow(TOUGHEN_RATE, this.elapsed / TOUGHEN_SECONDS) * Phaser.Math.FloatBetween(...TOUGHNESS_SPREAD);
     const tint = lerpColor(0xffffff, DARKEST_TINT, Phaser.Math.Clamp((hp - HP_LIGHTEST) / (HP_DARKEST - HP_LIGHTEST), 0, 1));
@@ -1335,6 +1415,7 @@ export class GameScene extends Phaser.Scene {
 
   private steerEnemies(dt: number) {
     this.charmFx.clear();
+    this.charmLeft = 0;
     for (const obj of this.enemies.getChildren()) {
       const e = obj as Sprite;
       if (!e.active) continue;
@@ -1364,6 +1445,12 @@ export class GameScene extends Phaser.Scene {
     if (lost + dt > 0) {
       e.setData('lost', lost);
       if (!e.getData('charmed')) return;
+      // Once you've started taking one in, it's yours: the charm holds until it's in.
+      if (lost <= 0 && (e.getData('absorb') as number) > 0) {
+        e.setData('lost', 0.05);
+        this.steerCharmed(e, 0.05);
+        return;
+      }
       if (lost <= 0) {
         // Coming to its senses, it recoils from you for a moment before it remembers what it was doing.
         this.uncharm(e);
@@ -1384,11 +1471,18 @@ export class GameScene extends Phaser.Scene {
     this.think(e, THOUGHTS.angry, { critical: true, shake: true });
   }
 
-  /** A charmed enemy comes close and then keeps pace beside you, bobbing like a curious seed, in a soft blue ring that fades as the charm runs out. */
+  /**
+   * A charmed enemy comes close and then keeps pace beside you, bobbing like a curious seed, blue
+   * in a soft blue ring. In its last moments it blinks white. One being taken in is drawn into you.
+   */
   private steerCharmed(e: Sprite, left: number) {
     const p = this.player;
     const body = e.body as Phaser.Physics.Arcade.Body;
-    if ((e.getData('caught') as number) > 0) {
+    const taking = (e.getData('absorb') as number) > 0;
+    this.charmLeft = Math.max(this.charmLeft, left);
+    if (taking) {
+      this.physics.moveToObject(e, p, Math.max(TAKE_PULL, this.stats.speed * 2));
+    } else if ((e.getData('caught') as number) > 0) {
       // Caught it from another: it peels away from the horde, curving off to one side.
       const away = Phaser.Math.Angle.Between(p.x, p.y, e.x, e.y) + ((e.getData('phase') as number) > Math.PI ? 0.9 : -0.9);
       this.physics.velocityFromRotation(away, (e.getData('speed') as number) * 0.8, body.velocity);
@@ -1400,9 +1494,10 @@ export class GameScene extends Phaser.Scene {
       const bob = CURIOUS_BOB * Math.sin((this.time.now / 1000) * 2.6 + (e.getData('phase') as number));
       body.velocity.set(pv.x * 0.7 + Math.cos(toward) * bob, pv.y * 0.7 + Math.sin(toward) * bob);
     }
-    const fade = Math.min(1, left) * e.alpha;
+    if (!taking && charmBlink(left)) e.setTintFill(0xffffff);
+    else e.clearTint();
     const r = 15 * (e.scaleX / SPRITE_SCALE);
-    this.charmFx.fillStyle(TRAIT_COLOURS.calm, 0.14 * fade).fillCircle(e.x, e.y, r).lineStyle(1.5, TRAIT_COLOURS.calm, 0.75 * fade).strokeCircle(e.x, e.y, r);
+    this.charmFx.fillStyle(TRAIT_COLOURS.calm, 0.14 * e.alpha).fillCircle(e.x, e.y, r).lineStyle(1.5, TRAIT_COLOURS.calm, 0.75 * e.alpha).strokeCircle(e.x, e.y, r);
   }
 
   /** Two enemies bump: if one is charmed and has it to give, the other catches it. */
@@ -1416,26 +1511,39 @@ export class GameScene extends Phaser.Scene {
     const step = (from.getData('caught') as number) + 1;
     from.setData('spreads', spreads - 1);
     to.setData({ lost: left, charmed: true, absorb: 0, caught: step, spreads: step < CHARM_STEPS ? CHARM_SPREADS : 0 });
+    to.setTexture('enemy-charmed').clearTint();
     this.think(to, THOUGHTS.baffled);
   }
 
-  /** The charm ends: it is an enemy again. */
+  /** The charm ends: it is an enemy again, an ember at its full size. */
   private uncharm(e: Sprite) {
+    if ((e.getData('absorb') as number) > 0) e.setScale(e.getData('absorbScale') as number);
     e.setData({ charmed: false, absorb: 0 });
-    e.setAlpha(1);
+    e.setTexture('enemy').setAlpha(1);
+    this.restoreTint(e);
   }
 
-  /** Holding against a charmed enemy takes it in: it fades into you, giving back a little energy and a point of experience. */
+  /**
+   * Touching a charmed enemy takes it in: it is drawn into your middle, shrinking as it goes, and
+   * the core gulps. It gives back a little energy and a point of experience.
+   */
   private takeIn(e: Sprite) {
     if (this.frozen || !e.active) return;
     const was = e.getData('absorb') as number;
-    if (was === 0) sfx.absorbing();
-    const p = Math.min(1, was + this.game.loop.delta / 1000 / CHARM_TAKE_SECONDS);
-    e.setData('absorb', p).setAlpha(1 - 0.8 * p);
+    if (was === 0) {
+      sfx.absorbing();
+      e.setData('absorbScale', e.scaleX);
+    }
+    // Touching is checked once per physics step (60 a second), not once per frame, so a fast screen doesn't slow it.
+    const p = Math.min(1, was + 1 / this.physics.world.fps / CHARM_TAKE_SECONDS);
+    e.setData('absorb', p)
+      .setAlpha(1 - 0.5 * p)
+      .setScale((e.getData('absorbScale') as number) * (1 - TAKE_SHRINK * p));
     this.absorbing = Math.max(this.absorbing, p);
     if (p < 1) return;
     e.disableBody(true, true);
     sfx.absorbedCalm();
+    this.gulp = 1;
     this.kills++;
     this.heal(CHARM_HEAL);
     this.gainXp(1);
@@ -1448,6 +1556,7 @@ export class GameScene extends Phaser.Scene {
       if (!e.active) continue;
       if (Phaser.Math.Distance.Between(e.x, e.y, this.player.x, this.player.y) < this.charmRadius()) {
         e.setData({ lost: CHARM_SECONDS + this.stats.charmLonger + Phaser.Math.FloatBetween(0, 0.6), charmed: true, absorb: 0, caught: 0, spreads: CHARM_SPREADS });
+        e.setTexture('enemy-charmed').clearTint();
         this.think(e, THOUGHTS.baffled, { critical: true });
       } else {
         e.setData({ lost: this.phaseSeconds() + Phaser.Math.FloatBetween(1, 2.2), charmed: false });
@@ -1587,7 +1696,7 @@ export class GameScene extends Phaser.Scene {
     if (!e) return;
     e.enableBody(true, x, y, true, true);
     this.forget(e);
-    e.setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false).setAlpha(1);
+    e.setTexture('enemy').setScale(SPRITE_SCALE).setCircle(12 * T, 4 * T, 4 * T).clearTint().setDepth(4).setCollideWorldBounds(false).setAlpha(1);
     e.setData({
       mood, gen, baseSize: gen ? BROOD_SIZE : 1, hp: gen ? BROOD_HP : 3, speed: AGGRO_SPEED, knock: 0, wander: 0, absorb: 0, tint: 0xffffff,
       phase: Math.random() * Math.PI * 2, near: false, irritated: false, lost: 0, noticed: false, swore: false, creeping: false,
@@ -1938,7 +2047,8 @@ export class GameScene extends Phaser.Scene {
     if (this.frozen || !e.active) return;
     const was = e.getData('absorb') as number;
     if (was === 0) sfx.absorbing();
-    const p = Math.min(1, was + this.game.loop.delta / 1000 / ABSORB_SECONDS);
+    // Once per physics step, as in takeIn.
+    const p = Math.min(1, was + 1 / this.physics.world.fps / ABSORB_SECONDS);
     e.setData('absorb', p).setAlpha(1 - 0.7 * p);
     this.absorbing = Math.max(this.absorbing, p);
     if (e.getData('mood') === 'aggro') this.setAnger(Math.max(this.anger, p));
@@ -1971,7 +2081,7 @@ export class GameScene extends Phaser.Scene {
   /** Sparks drift off the embers on screen, at a steady rate per enemy. */
   private shedFlecks(dt: number) {
     const view = this.cameras.main.worldView;
-    const embers = (this.enemies.getChildren() as Sprite[]).filter((e) => e.active && view.contains(e.x, e.y));
+    const embers = (this.enemies.getChildren() as Sprite[]).filter((e) => e.active && !e.getData('charmed') && view.contains(e.x, e.y));
     if (!embers.length) return;
     for (const e of embers) {
       // Each ember's chance this frame comes from how its temperament burns.
@@ -2075,6 +2185,50 @@ export class GameScene extends Phaser.Scene {
     g.lineStyle(width, this.braceLeft > 0 ? 0xe2e8f0 : 0x64748b, 0.9 * this.player.alpha).strokeCircle(this.player.x, this.player.y, r);
   }
 
+  /** The core's radius out to the edge of its hard rim, if it has one. */
+  private coreEdge() {
+    const hard = this.trait('hard');
+    return 15 * (this.player.scaleX / SPRITE_SCALE) + (hard ? Math.min(HARD_EDGE_MAX, HARD_EDGE * hard) : 0);
+  }
+
+  /** While anything is charmed, or you are phasing, the core wears a blue outline. It blinks as the last charm runs out. */
+  private drawCharmEdge() {
+    const g = this.charmEdge.clear();
+    if (this.charmLeft <= 0 && this.phaseLeft <= 0) return;
+    const blink = this.phaseLeft <= 0 && charmBlink(this.charmLeft);
+    g.lineStyle(2.5, blink ? 0xffffff : TRAIT_COLOURS.calm, 0.95).strokeCircle(this.player.x, this.player.y, this.coreEdge() + 3);
+  }
+
+  /** The power's arc under the core: draining while it runs, filling while it recharges, then a moment full before it fades. */
+  private drawPowerArc(dt: number) {
+    const g = this.powerArc.clear();
+    const t = this.tutorial ? null : this.strongestTrait();
+    if (!t || this.ui.needsIntro(t)) return;
+    const running = Math.max(this.phaseLeft, this.braceLeft);
+    const charge = 1 - this.abilityCooldown / this.abilityCooldownFull;
+    let fill = 1;
+    let alpha = 1;
+    if (running > 0) {
+      fill = running / this.powerFull;
+      this.arcFade = 1;
+    } else if (charge < 1) {
+      fill = charge;
+      alpha = 0.7;
+      this.arcFade = 1;
+    } else {
+      this.arcFade = Math.max(0, this.arcFade - dt / ARC_FADE_SECONDS);
+      if (this.arcFade <= 0) return;
+      alpha = this.arcFade;
+    }
+    const colour = TRAIT_COLOURS[t];
+    const { x, y } = this.player;
+    const r = this.coreEdge() + ARC_GAP;
+    // Angles run clockwise from the right, so straight down is half pi; the bar fills from left to right.
+    const left = Math.PI / 2 + ARC_SPAN / 2;
+    g.lineStyle(3, colour, 0.2 * alpha).beginPath().arc(x, y, r, left, left - ARC_SPAN, true).strokePath();
+    if (fill > 0) g.lineStyle(3, colour, 0.95 * alpha).beginPath().arc(x, y, r, left, left - ARC_SPAN * Math.min(1, fill), true).strokePath();
+  }
+
   /** The strongest trait; ties go to the one gained most recently. None until the core has any. */
   private abilityHud(): HudState['ability'] {
     const trait = this.tutorial ? null : this.strongestTrait();
@@ -2147,11 +2301,11 @@ export class GameScene extends Phaser.Scene {
     if (t !== 'rage') this.powerRing(TRAIT_COLOURS[t]);
     if (labelsOn()) this.ui.floatWord(POWER_NAMES[t]);
     if (t === 'calm') {
-      this.phaseLeft = this.phaseSeconds();
+      this.phaseLeft = this.powerFull = this.phaseSeconds();
       this.lastAbility = 'phase';
       this.loseEnemies();
     } else if (t === 'hard') {
-      this.braceLeft = this.braceSeconds();
+      this.braceLeft = this.powerFull = this.braceSeconds();
       this.lastAbility = 'brace';
     } else {
       this.burst();
@@ -2182,7 +2336,8 @@ export class GameScene extends Phaser.Scene {
   /** The core swells with the anger it is taking in, and shrinks a little as its energy runs down. */
   private sizeCore() {
     const energy = Phaser.Math.Clamp(this.hp / this.stats.maxHp, 0, 1);
-    const scale = SPRITE_SCALE * (1 + ANGER_SWELL * this.anger) * (ENERGY_MIN_SIZE + (1 - ENERGY_MIN_SIZE) * energy);
+    const gulp = this.gulp > 0 ? 1 + GULP_SWELL * Math.sin(Math.PI * (1 - this.gulp)) : 1;
+    const scale = SPRITE_SCALE * (1 + ANGER_SWELL * this.anger) * (ENERGY_MIN_SIZE + (1 - ENERGY_MIN_SIZE) * energy) * gulp;
     this.player.setScale(scale);
     this.angerOverlay.setScale(scale);
   }
