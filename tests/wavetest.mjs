@@ -63,8 +63,15 @@ const t = await open({ out: out + '-desktop', port: 9362, url: 'http://127.0.0.1
   check('when the next wave starts the hum comes back', await humIn());
   check('and so do enemies', (await evaluate(`${G}.enemies.countActive()`)) > 3);
 
-  // ---- The minimap, in place of the old radar.
-  check('the old radar is gone', await evaluate(`${U}.radar === undefined && !('gemArrow' in ${G}.hudState())`));
+  // ---- The gem radar: while no gem is on screen, an arrow at the edge points to the nearest one.
+  await evaluate(`(() => { const s = ${G}; s.gems.getChildren().forEach(g => g.disableBody(true, true)); s.dropGem(s.player.x + 3000, s.player.y); return true; })()`); await sleep(300);
+  const arrow = await evaluate(`(() => { const a = ${G}.hudState().gemArrow; return { angle: a && +a.angle.toFixed(2), drawn: ${U}.radar.commandBuffer.length }; })()`);
+  check('radar: with no gem on screen, an arrow points to the nearest one', arrow.angle === 0 && arrow.drawn > 0, arrow);
+  await shot('radar.png');
+  const seen = await evaluate(`(() => { const s = ${G}; const v = s.cameras.main.worldView; const x = s.player.x + v.width * 0.4; s.dropGem(x, s.player.y); return v.contains(x, s.player.y); })()`); await sleep(300);
+  check('radar: hidden while a gem is on screen', seen && (await evaluate(`${U}.radar.commandBuffer.length`)) === 0 && (await evaluate(`${G}.hudState().gemArrow`)) === null, { seen });
+
+  // ---- The minimap, beside the radar.
   await evaluate(`(() => { const s = ${G}; s.enemies.getChildren().forEach(e => e.disableBody(true, true)); s.spawnTimer = 1e9; s.elapsed = 20;
     for (let i = 0; i < 40; i++) { s.spawnEnemy(); const e = s.enemies.getChildren().filter(o => o.active).pop(); const a = i * 0.7, d = 200 + i * 25; e.setPosition(s.player.x + Math.cos(a) * d, s.player.y + Math.sin(a) * d); e.setData('speed', 0); }
     for (let i = 0; i < 12; i++) s.dropGem(s.player.x - 400 + i * 30, s.player.y + 500);

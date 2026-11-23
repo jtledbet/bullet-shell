@@ -15,6 +15,10 @@ const PAD = 32; // clears rounded corners and notches in landscape
 /** Minimap: its radius on screen, and how far into the world its rim reaches. */
 const MAP_R = 44;
 const MAP_RANGE = 1400;
+/** Gem radar: how far in from the screen edge the arrow sits, its size, and how strongly it shows. */
+const RADAR_INSET = 22;
+const RADAR_SIZE = 9;
+const RADAR_ALPHA = 0.7;
 /** Ignore taps on a fresh menu briefly, so a thumb lifting mid-fight can't pick for you. */
 const MENU_ARM_MS = 400;
 /** The HUD is hidden during the tutorial, then snaps in when the fight starts. */
@@ -77,6 +81,7 @@ export class UIScene extends Phaser.Scene {
   private hud!: Phaser.GameObjects.Graphics;
   private map!: Phaser.GameObjects.Graphics;
   private mapZone?: Phaser.GameObjects.Zone;
+  private radar!: Phaser.GameObjects.Graphics;
   private pauseBtn!: Phaser.GameObjects.Container;
   /** Only where fullscreen is supported. */
   private fsBtn?: Phaser.GameObjects.Container;
@@ -93,7 +98,7 @@ export class UIScene extends Phaser.Scene {
   private xpZone?: Phaser.GameObjects.Zone;
   private orb?: Phaser.GameObjects.Image;
   private info!: Phaser.GameObjects.Text;
-  /** Whether the HUD (bars, info line, minimap) is showing; off during the tutorial. */
+  /** Whether the HUD (bars, info line, minimap, gem radar) is showing; off during the tutorial. */
   private hudShown = false;
   private hint?: Phaser.GameObjects.Text;
   private menu?: Phaser.GameObjects.Container;
@@ -126,7 +131,8 @@ export class UIScene extends Phaser.Scene {
     this.sticks = new TwinStick(this);
     this.hud = this.add.graphics();
     this.map = this.add.graphics();
-    this.info = this.label(PAD, PAD + 22, '', { fontSize: '15px', color: '#cbd5e1' });
+    this.radar = this.add.graphics();
+    this.info =this.label(PAD, PAD + 22, '', { fontSize: '15px', color: '#cbd5e1' });
 
     const pauseBg = this.add.rectangle(0, 0, 44, 44, 0x1e293b, 0.7).setStrokeStyle(2, 0x334155);
     const pauseIcon = this.add.graphics().fillStyle(0xe2e8f0).fillRect(-8, -10, 5, 20).fillRect(3, -10, 5, 20);
@@ -269,6 +275,7 @@ export class UIScene extends Phaser.Scene {
       this.hud.clear().setAlpha(0);
       this.info.setAlpha(0);
       this.map.clear();
+      this.radar.clear();
       this.drawAbility(null);
       return;
     }
@@ -286,7 +293,36 @@ export class UIScene extends Phaser.Scene {
     g.fillStyle(0x4ade80).fillRect(0, 0, (s.xp / s.xpNext) * w, 5);
 
     this.info.setText(`lv ${s.level}   ${clock(s.elapsed)}   ${s.kills} ${s.hell ? 'kills' : 'souls'}`);
+    this.drawRadar(s.gemArrow);
     this.drawAbility(s.ability);
+  }
+
+  private drawRadar(arrow: HudState['gemArrow']) {
+    const g = this.radar.clear();
+    if (!arrow) return;
+    const { w, h } = this;
+    const m = RADAR_INSET;
+    const ox = Phaser.Math.Clamp(arrow.px * w, m, w - m);
+    const oy = Phaser.Math.Clamp(arrow.py * h, m, h - m);
+    const dx = Math.cos(arrow.angle);
+    const dy = Math.sin(arrow.angle);
+    // Walk from the player along the direction until the inset edge.
+    const tx = dx > 0 ? (w - m - ox) / dx : dx < 0 ? (m - ox) / dx : Infinity;
+    const ty = dy > 0 ? (h - m - oy) / dy : dy < 0 ? (m - oy) / dy : Infinity;
+    const t = Math.min(tx, ty);
+    const x = ox + dx * t;
+    const y = oy + dy * t;
+    const s = RADAR_SIZE;
+    const side = arrow.angle + Math.PI / 2;
+    // Long and narrow, so the point reads clearly at any angle.
+    const bx = x - dx * s;
+    const by = y - dy * s;
+    const half = s * 0.55;
+    g.fillStyle(0x4ade80, RADAR_ALPHA).fillTriangle(
+      x + dx * s, y + dy * s,
+      bx + Math.cos(side) * half, by + Math.sin(side) * half,
+      bx - Math.cos(side) * half, by - Math.sin(side) * half,
+    );
   }
 
   /** A round button in the trait's colour, with a ring that fills as it recharges and a pulse when ready. */

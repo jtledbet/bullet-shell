@@ -5,7 +5,7 @@
 #   npm run deploy:next   -> https://ledsec.dev/bullet-shell/next/   (preview, to try before going live)
 #
 # Each deploy is a normal (not forced) commit on gh-pages, so every earlier deploy can be put
-# back. Other folders there are left alone: a live deploy keeps /proto/ and /next/.
+# back. A live deploy keeps /next/ and replaces everything else.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -27,7 +27,7 @@ git fetch -q origin gh-pages
 git worktree add -q -B gh-pages "$tmp" origin/gh-pages
 
 if [ "$target" = live ]; then
-  find "$tmp" -mindepth 1 -maxdepth 1 ! -name .git ! -name proto ! -name next -exec rm -rf {} +
+  find "$tmp" -mindepth 1 -maxdepth 1 ! -name .git ! -name next -exec rm -rf {} +
   cp -r dist/. "$tmp"
   touch "$tmp/.nojekyll"
 else

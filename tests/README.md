@@ -45,7 +45,7 @@ hold the game mid-check. `abilitytest` and `tiptest` clear that to check the car
 | `rotatetest` | The "turn your phone" screen |
 | `devtest` | The developer switches, speed readout and event log, and that `?dev` lasts only for that visit |
 | `tiptest` | Explanations: on cards, on the power's card (closed with E), and on hover (it also runs `tipcards` at phone size) |
-| `wavetest` | Balance (harder hits, Siphon's ceiling, card and level growth), merging gems, the lull between waves, and the minimap (it also runs `wavephone` at phone size) |
+| `wavetest` | Balance (harder hits, Siphon's ceiling, card and level growth), merging gems, the lull between waves, the gem radar, and the minimap (it also runs `wavephone` at phone size) |
 | `powertest` | The powers growing with level, and Brace knocking away what touches you |
 | `abilitytest` | The power's card and its button; run with `TOUCH=1` for the phone layout |
 | `tutfixtest` | Orientation's endings, sounds and temperament tells |

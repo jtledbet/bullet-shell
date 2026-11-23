@@ -25,7 +25,8 @@ await shot('charmed.png');
 // Touch one: it is taken in.
 const before = await me();
 await evaluate(`(() => { const s = ${G}; const e = s.enemies.getChildren().find(o => o.active && o.getData('tag') === 0); window.__hold = () => { if (e.active) { e.setPosition(s.player.x + 6, s.player.y); } }; s.events.on('update', window.__hold); })()`);
-await sleep(900);
+// Taking in needs about 0.5 s of contact, which a slow headless frame rate can stretch to nearly 1 s: wait for it, up to 2.5 s.
+for (let i = 0; i < 25 && (await me()).count === before.count; i++) await sleep(100);
 await evaluate(`${G}.events.off('update', window.__hold)`);
 const after = await me();
 f = await foes();

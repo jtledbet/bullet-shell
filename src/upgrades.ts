@@ -58,13 +58,13 @@ const BASE = baseStats();
 export const UPGRADES: Upgrade[] = [
   {
     name: 'Quick Trigger',
-    desc: '+25% fire rate',
+    desc: '+25% of starting fire rate',
     tip: 'Your bolts come faster. Each one still costs a sliver of your own energy, so you spend yourself faster too.',
     apply: (s) => (s.fireRate += BASE.fireRate * 0.25),
   },
   {
     name: 'Heavy Rounds',
-    desc: '+50% damage',
+    desc: '+50% of starting damage',
     tip: 'More of you goes into every shot. Bolts, sparks, flares and your blast all hit harder.',
     apply: (s) => (s.damage += BASE.damage * 0.5),
   },
