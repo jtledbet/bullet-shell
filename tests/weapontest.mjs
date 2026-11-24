@@ -29,9 +29,12 @@ await evaluate(`${G}.level = 1`); await clear();
 // --- The flare.
 check('no flare until its card', (await evaluate(`${G}.stats.flareEvery`)) === 0);
 check('the shop sells both flare items, the second only once you have the first', await evaluate(`Promise.all([import('/src/upgrades.ts'), import('/src/shop.ts')]).then(([u, m]) => { const base = u.baseStats(); const names = (s) => new Set(m.shopStock(s, null).map(x => x.name)); const a = names(base); const b = names({ ...base, flareEvery: 3.5 }); return a.has('Flare') && !a.has('Brighter Flares') && !b.has('Flare') && b.has('Brighter Flares'); })`));
-await evaluate(`(() => { const s = ${G}; s.stats.flareEvery = 3.5; s.flareCooldown = 0; window.__hp0 = s.hp; })()`);
-// A clump 200 away, one enemy off to the side out of the blast, one right behind you.
-await dummy(200, 0); await dummy(230, 30); await dummy(215, -40); await dummy(200, 170); await dummy(-120, 0);
+// A clump 200 away (the nearest), one enemy off to the side out of the blast, one behind you.
+// All placed before the flare is ready: it aims at the nearest enemy, so if it could fire while they
+// were still being placed, a stall between two placements would change what it aims at.
+await evaluate(`(() => { const s = ${G}; s.stats.flareEvery = 3.5; s.flareCooldown = 1e9; return true; })()`);
+await dummy(200, 0); await dummy(230, 30); await dummy(215, -40); await dummy(200, 170); await dummy(-260, 0);
+await evaluate(`(() => { const s = ${G}; s.flareCooldown = 0; window.__hp0 = s.hp; return true; })()`);
 await sleep(250);
 const flying = await evaluate(`(() => { const s = ${G}; const fl = s.flares.getChildren().find(o => o.active); return fl ? { vx: Math.round(fl.body.velocity.x), tint: fl.tintTopLeft !== 0xffffff || true } : null; })()`);
 check('with the card it lobs a flare at the nearest enemy', flying && Math.abs(flying.vx) > 150, flying);
