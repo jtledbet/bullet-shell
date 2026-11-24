@@ -36,9 +36,11 @@ await evaluate(`(() => { const s = ${G}; s.traits = { hard: 0, calm: 0, rage: 0 
 c = await core();
 check('nearly dead: wide eyes, open mouth, sweat', c.fear > 0.85 && c.eye > 1.25 && c.open > 0.2 && c.sweat > 0.5, c);
 await shot('core-scared.png');
-await evaluate(`(() => { const s = ${G}; s.hp = s.stats.maxHp; s.invuln = 0; s.onPlayerHit(); })()`); await sleep(120);
-c = await core();
-check('hit: it winces', c.eye < 0.6, c);
+// Watched frame by frame through the wince (0.35 s), taking its deepest point: the eyes ease shut,
+// so one fixed moment early on can catch them still on the way down after a slow frame.
+const wince = await evaluate(`new Promise(r => { const s = ${G}; s.hp = s.stats.maxHp; s.invuln = 0; s.onPlayerHit(); const t0 = performance.now(); let min = 9, n = 0;
+  const f = () => { min = Math.min(min, s.face.look.eye); if (performance.now() - t0 < 500 && ++n < 300) requestAnimationFrame(f); else r({ min: +min.toFixed(2), frames: n }); }; requestAnimationFrame(f); })`);
+check('hit: it winces', wince.min < 0.6, wince);
 
 // --- Damage numbers.
 await evaluate(`(() => { const s = ${G}; s.hp = s.stats.maxHp = 1e9; s.spawnTimer = 1e9; s.fireCooldown = 1e9; s.spawnEnemy(); const e = s.enemies.getChildren().find(o => o.active); e.setPosition(s.player.x + 60, s.player.y); e.setData('hp', 99); e.setData('speed', 0); s.shoot(0, 600, 1, false); })()`); await sleep(250);
