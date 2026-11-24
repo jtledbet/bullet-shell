@@ -10,6 +10,7 @@ import { bestRun, devFlareOn, devOn, devShotgunOn, isMuted, labelsOn, setDevFlar
 import { POWER_NAMES, POWER_TIPS, TRAIT_COLOURS, type Trait } from '../traits';
 import type { HudState, MapState, ShopActions, ShopView } from './GameScene';
 import type { CardIcon, Upgrade } from '../upgrades';
+import { Starfield } from '../starfield';
 
 const PAD = 32; // clears rounded corners and notches in landscape
 /** Minimap: its radius on screen, and how far into the world its rim reaches. */
@@ -49,6 +50,8 @@ const PAIR_OFFSET = 98;
  * (and the badges on the cards' top edges). The cards give up as much height as they move down,
  * so the buttons under them stay put.
  */
+/** The pause menu's stars drift left: the far layer at 0.04 of this (px a second), the near one at 0.2. */
+const STAR_TRAVEL = 100;
 const SHOP_GAP = 12;
 const SHOP_TOP_MIN = 88;
 const SHOP_CARD_ROOM = 168;
@@ -122,6 +125,10 @@ export class UIScene extends Phaser.Scene {
   private hpZone?: Phaser.GameObjects.Zone;
   private xpZone?: Phaser.GameObjects.Zone;
   private orb?: Phaser.GameObjects.Image;
+  /** The stars behind the pause menu: where they sit, the layer they're drawn on (while it's open), and how far they've drifted. */
+  private starfield = new Starfield();
+  private stars?: Phaser.GameObjects.Graphics;
+  private starTravel = 0;
   private info!: Phaser.GameObjects.Text;
   /** Whether the HUD (bars, info line, minimap, gem radar) is showing; off during the tutorial. */
   private hudShown = false;
@@ -269,8 +276,13 @@ export class UIScene extends Phaser.Scene {
     this.tweens.add({ targets: word, alpha: 0.9, duration: dy > 0 ? 1000 : 180, hold: dy > 0 ? 2000 : 700, yoyo: true, onComplete: () => word.destroy() });
   }
 
-  update() {
+  update(_time: number, delta: number) {
     if (this.hint && this.sticks?.touched) this.dismissHint();
+    // The pause menu's stars drift.
+    if (this.stars?.active) {
+      this.starTravel += (delta / 1000) * STAR_TRAVEL;
+      this.starfield.draw(this.stars.clear(), this.w, this.h, this.starTravel);
+    }
     // The build orb breathes.
     if (this.orb?.active) {
       const breath = (Math.sin(this.time.now / 520) + 1) / 2;
@@ -644,7 +656,11 @@ export class UIScene extends Phaser.Scene {
   showPause(onResume: () => void, onRestart: () => void) {
     this.openMenu(() => {
       const h = this.h;
+      // Behind it all, over the dimmed game: the stars (drawn each frame in update).
+      this.stars = this.add.graphics();
+      this.starfield.draw(this.stars, this.w, h, this.starTravel);
       return [
+        this.stars,
         this.title('Paused', h * 0.25),
         ...this.menuButton('Resume', h * 0.47, onResume, { tip: 'Back to it. Esc, P and Space do the same.' }),
         ...this.menuButton('reorient', h * 0.68, onRestart, { dx: -PAIR_OFFSET, tip: 'Give up this run and start over from orientation.' }),

@@ -5,7 +5,7 @@ const bg = () => evaluate(`game.config.backgroundColor.color`);
 const setLabels = (on) => evaluate(`import('/src/storage.ts').then(m => { m.setLabels(${on}); return true; })`);
 
 // --- Nudges for a player who has done nothing.
-check('orientation: the measured room, ruled with the grid, no stars', (await bg()) === 0x0b1222 && (await evaluate(`${G}.grid.visible`)) && (await evaluate(`${G}.starAlpha`)) === 0, await bg());
+check('orientation: the measured room, ruled with the grid, no stars', (await bg()) === 0x0b1222 && (await evaluate(`${G}.grid.visible`)) && (await evaluate(`${G}.stars === undefined`)), await bg());
 // One curious seed, so the run is the same every time; hold the idle clock still until the first hint has gone.
 await evaluate(`(() => { const s = ${G}; s.enemies.getChildren().forEach(e => e.disableBody(true, true)); s.spawnSeed('curious', s.player.x + 260, s.player.y, 0); })()`);
 for (let i = 0; i < 40 && (await uiTexts()).some((x) => x.includes('wasd')); i++) { await evaluate(`${G}.idleTime = 0`); await sleep(250); }
@@ -26,8 +26,8 @@ check('after any input: no more nudges, even next run', (await evaluate(`${G}.nu
 
 // --- The run: backdrop, grid, shots.
 await evaluate(`(() => { const s = ${G}; s.traits.rage = 2; s.lastTrait = 'rage'; s.endTutorial('absorbed'); s.stats.maxHp = s.hp = 1e9; })()`); await sleep(1600);
-const g = await evaluate(`({ bg: game.config.backgroundColor.color, vis: ${G}.grid.visible, stars: ${G}.starAlpha, drawn: ${G}.stars.commandBuffer.length })`);
-check('run: black space, the grid gone, stars out', g.bg === 0 && !g.vis && g.stars === 1 && g.drawn > 30, g);
+const g = await evaluate(`({ bg: game.config.backgroundColor.color, vis: ${G}.grid.visible, alpha: ${G}.grid.alpha, stars: ${G}.stars === undefined ? 'none' : 'some' })`);
+check('run: the same ruled room, the grid stays, no stars', g.bg === 0x0b1222 && g.vis && g.alpha === 1 && g.stars === 'none', g);
 await evaluate(`(() => { const s = ${G}; s.shoot(0.7, 300, 3, false); s.shoot(-2.2, 300, 3, true); })()`); await sleep(120);
 const shots = await evaluate(`${G}.bullets.getChildren().filter(b => b.active).map(b => ({ key: b.texture.key, rot: +b.rotation.toFixed(2), off: +Math.hypot(b.body.center.x - b.x, b.body.center.y - b.y).toFixed(2), add: b.blendMode === 1 }))`);
 check('bolt and spark: textured, turned to face their flight, body on the head', shots.length === 2 && shots[0].key === 'bolt' && shots[1].key === 'spark' && shots[0].rot === 0.7 && shots[1].rot === -2.2 && shots.every((b) => b.off < 1 && b.add), shots);
@@ -78,8 +78,8 @@ check('game over offers "again" and "reorient"', over.includes('again') && over.
 await shot('gameover.png');
 const again = await uiPoint(`u.menu.list.find(o => o.type === 'Text' && o.text === 'again')`);
 await click(again.x, again.y); await sleep(1500);
-const st = await evaluate(`(() => { const s = ${G}; return { tutorial: s.tutorial, mode: s.mode, traits: { ...s.traits }, grid: s.grid.visible, stars: s.starAlpha, bg: game.config.backgroundColor.color, hp: s.hp, hud: ${U}.hud.alpha }; })()`);
-check('"again": straight into the run as the same core', !st.tutorial && st.traits.rage === 2 && !st.grid && st.stars === 1 && st.bg === 0 && st.hp === 100 && st.hud === 1, st);
+const st = await evaluate(`(() => { const s = ${G}; return { tutorial: s.tutorial, mode: s.mode, traits: { ...s.traits }, grid: s.grid.visible, bg: game.config.backgroundColor.color, hp: s.hp, hud: ${U}.hud.alpha }; })()`);
+check('"again": straight into the run as the same core', !st.tutorial && st.traits.rage === 2 && st.grid && st.bg === 0x0b1222 && st.hp === 100 && st.hud === 1, st);
 await evaluate(`${G}.scene.restart({})`); await sleep(1200);
 check('a plain restart goes back to orientation', (await evaluate(`${G}.tutorial`)) && (await bg()) === 0x0b1222);
 await setLabels(false);

@@ -38,7 +38,7 @@ hold the game mid-check. `abilitytest` and `tiptest` clear that to check the car
 | `weapontest` | Shot damage and growth, the flare, its shop items, the developer switch |
 | `rescuetest` | The second wind offered to new players |
 | `desktoptest` | The power's place and key on desktop, fullscreen, space to pause |
-| `startest` | The grid in orientation and the starfield after it |
+| `startest` | Full grid: orientation and the run in the same ruled navy room (no change when orientation ends, the grid follows the view, no stars), and the stars drifting behind the pause menu |
 | `cornertest` | The pause and fullscreen buttons fading back |
 | `orbtest` | The build orb in the pause menu (live game only) |
 | `fstest` | Fullscreen: the button and F ask for it; clicking it or pause fires nothing |

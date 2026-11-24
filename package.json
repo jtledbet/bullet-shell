@@ -1,7 +1,7 @@
 {
   "name": "bullet-shell",
   "private": true,
-  "version": "0.25.0-shop",
+  "version": "0.26.0-shop",
   "type": "module",
   "scripts": {
     "dev": "vite --host",

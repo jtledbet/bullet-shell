@@ -24,19 +24,11 @@ const START = 1200;
 const GRID_TILE = 64;
 const GRID_SIZE = 2048;
 const GRID_COLOUR = 0x1e293b;
-/** Orientation happens in a measured room: this colour, ruled with the grid. The run is out in open space, black, with stars. */
-const FIELD_COLOUR = 0x0b1222;
 /**
- * The starfield: a few layers of distant points. Each slides past at a fraction of your own
- * movement (the farther, the slower), which is what shows you are moving at all. The pattern
- * repeats every STAR_SPAN world px, wider than the view ever gets.
+ * Orientation and the run both happen in one measured room: this colour, ruled with the grid
+ * (Max, 2026-11-24: "we're going full grid"). The stars are behind the pause menu now (see starfield.ts).
  */
-const STAR_SPAN = 1600;
-const STAR_LAYERS = [
-  { drift: 0.04, count: 110, size: 0.9, colour: 0x8ea2c8, alpha: 0.55 },
-  { drift: 0.1, count: 60, size: 1.2, colour: 0xc7d2fe, alpha: 0.75 },
-  { drift: 0.2, count: 26, size: 1.7, colour: 0xffffff, alpha: 0.95 },
-];
+const FIELD_COLOUR = 0x0b1222;
 /** The first level-up comes quickly; after that the curve takes over. */
 const FIRST_LEVEL_XP = 3;
 /**
@@ -529,10 +521,6 @@ export class GameScene extends Phaser.Scene {
   private shield = 0;
   private shieldFx!: Phaser.GameObjects.Graphics;
   private grid!: Phaser.GameObjects.Graphics;
-  private stars!: Phaser.GameObjects.Graphics;
-  /** Where each layer's stars sit within the repeating span, and how strongly the field shows (0 in orientation). */
-  private starSpots: { x: number; y: number }[][] = [];
-  private starAlpha = 0;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private readonly aimVec = new Phaser.Math.Vector2();
   private readonly moveVec = new Phaser.Math.Vector2();
@@ -687,13 +675,10 @@ export class GameScene extends Phaser.Scene {
     this.physics.resume();
     this.time.paused = false;
 
-    this.stars = this.add.graphics().setDepth(-1);
-    this.starSpots = STAR_LAYERS.map((l) => Array.from({ length: l.count }, () => ({ x: Math.random() * STAR_SPAN, y: Math.random() * STAR_SPAN })));
-    this.starAlpha = this.tutorial ? 0 : 1;
-    this.grid = this.add.graphics().setVisible(this.tutorial);
+    this.grid = this.add.graphics();
     this.grid.lineStyle(1, GRID_COLOUR);
     for (let p = 0; p <= GRID_SIZE; p += GRID_TILE) this.grid.lineBetween(p, 0, p, GRID_SIZE).lineBetween(0, p, GRID_SIZE, p);
-    this.setBackdrop(this.tutorial ? FIELD_COLOUR : 0x000000);
+    this.setBackdrop(FIELD_COLOUR);
     this.powerFx = this.add.graphics().setDepth(12);
     this.shieldFx = this.add.graphics().setDepth(12);
     this.rescued = false;
@@ -946,19 +931,6 @@ export class GameScene extends Phaser.Scene {
     const kx = Math.cos(this.blastAngle) * k;
     const ky = Math.sin(this.blastAngle) * k;
     this.grid.setPosition(snap(v.centerX) + kx, snap(v.centerY) + ky);
-
-    // The stars: each layer wraps around the view, sliding by a fraction of the camera's travel. A blast jolts them too.
-    const g = this.stars.clear();
-    if (this.starAlpha <= 0) return;
-    const wrap = (n: number) => ((n % STAR_SPAN) + STAR_SPAN) % STAR_SPAN;
-    STAR_LAYERS.forEach((layer, i) => {
-      g.fillStyle(layer.colour, layer.alpha * this.starAlpha);
-      for (const s of this.starSpots[i]) {
-        const x = v.centerX - STAR_SPAN / 2 + wrap(s.x - v.centerX * layer.drift) + kx;
-        const y = v.centerY - STAR_SPAN / 2 + wrap(s.y - v.centerY * layer.drift) + ky;
-        if (x > v.x - 2 && x < v.right + 2 && y > v.y - 2 && y < v.bottom + 2) g.fillRect(x, y, layer.size, layer.size);
-      }
-    });
   }
 
   /**
@@ -1734,7 +1706,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * The tutorial is over: the grid fades in and the normal run begins. Killing or standing idle
+   * The tutorial is over: the normal run begins, in the same ruled room. Killing or standing idle
    * leads to bullet hell; absorbing or running away, bullet heaven.
    */
   private endTutorial(outcome: 'killed' | 'absorbed' | 'idled' | 'ran' = 'absorbed') {
@@ -1768,18 +1740,7 @@ export class GameScene extends Phaser.Scene {
     this.tutorial = false;
     this.mode = hell ? 'hell' : 'heaven';
     this.stats.damage *= 1 + RAGE_DAMAGE * this.trait('rage');
-    // Out of the measured room and into open space: the grid fades, the dark comes in, the stars come out.
-    this.tweens.add({ targets: this.grid, alpha: 0, duration: 1200, onComplete: () => this.grid.setVisible(false) });
-    this.tweens.addCounter({
-      from: 0,
-      to: 1,
-      duration: 1200,
-      onUpdate: (tw) => {
-        const k = tw.getValue() ?? 1;
-        this.setBackdrop(lerpColor(FIELD_COLOUR, 0x000000, k));
-        this.starAlpha = k;
-      },
-    });
+    // The run goes on in the same measured room: the grid stays.
     this.spawnTimer = 1.5;
   }
 
