@@ -38,6 +38,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   { ...weapon('Buckshot'), trait: 'hard', cost: 30 },
   {
     name: 'Thick Skin',
+    icon: 'guard',
     desc: 'Hits take 15% less',
     tip: 'What reaches you hurts less.',
     trait: 'hard',
@@ -47,6 +48,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   // Calm takes in: gems that mend, and charm that holds.
   {
     name: 'Mending Gems',
+    icon: 'health',
     desc: 'Each gem heals 1',
     tip: 'Gems give back a little energy. Stacks.',
     trait: 'calm',
@@ -55,6 +57,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   },
   {
     name: 'Lingering Charm',
+    icon: 'charm',
     desc: 'Charm lasts 2 s longer',
     tip: 'More time to take them in.',
     trait: 'calm',
@@ -67,6 +70,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   { ...weapon('Brighter Flares'), trait: 'rage', cost: 30 },
   {
     name: 'Spite',
+    icon: 'damage',
     desc: '+5% damage per 10% energy missing',
     tip: 'Hurt more, hit harder. Stacks.',
     trait: 'rage',
@@ -76,6 +80,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   // Anyone's.
   {
     name: 'Purse',
+    icon: 'pickup',
     desc: 'Keep half the gems you miss',
     tip: 'Gems left behind at the end of a wave are half yours.',
     trait: null,

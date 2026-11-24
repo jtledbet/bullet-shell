@@ -89,6 +89,8 @@ export class BootScene extends Phaser.Scene {
     g.fillStyle(0x4ade80).fillPoints(gem, true);
     tex('gem', 16);
 
+    this.icons();
+
     g.destroy();
     this.scene.start('game');
   }
@@ -182,6 +184,104 @@ export class BootScene extends Phaser.Scene {
     ctx.arc(c, c, 4.5 * S, 0, Math.PI * 2);
     ctx.fill();
     canvas.refresh();
+  }
+
+  /**
+   * The small icons on cards (see CardIcon): `icon-<name>`, 16 units square, drawn
+   * white so each card tints its icon with its tree's colour.
+   */
+  private icons() {
+    const line = (ctx: CanvasRenderingContext2D, ...pts: number[]) => {
+      ctx.beginPath();
+      ctx.moveTo(pts[0], pts[1]);
+      for (let i = 2; i < pts.length; i += 2) ctx.lineTo(pts[i], pts[i + 1]);
+    };
+    const draw: Record<string, (ctx: CanvasRenderingContext2D) => void> = {
+      // Damage: an impact, a sharp eight-pointed star.
+      damage: (ctx) => {
+        ctx.beginPath();
+        for (let i = 0; i < 16; i++) {
+          const a = (i / 16) * Math.PI * 2 - Math.PI / 2;
+          const r = i % 2 ? 3 : 7.2;
+          ctx.lineTo(8 + Math.cos(a) * r, 8 + Math.sin(a) * r);
+        }
+        ctx.fill();
+      },
+      // Fire rate: a bolt of lightning.
+      rate: (ctx) => {
+        line(ctx, 10, 0.8, 3.2, 9, 7.4, 9, 5.8, 15.2, 12.8, 6.8, 8.6, 6.8);
+        ctx.closePath();
+        ctx.fill();
+      },
+      // Your shots (more, through, farther): an arrow in flight.
+      shot: (ctx) => {
+        line(ctx, 2.5, 13.5, 13, 3);
+        ctx.stroke();
+        line(ctx, 6.5, 3, 13, 3, 13, 9.5);
+        ctx.stroke();
+      },
+      // Moving: a double chevron.
+      speed: (ctx) => {
+        line(ctx, 2.5, 2.5, 7.5, 8, 2.5, 13.5);
+        ctx.stroke();
+        line(ctx, 8.5, 2.5, 13.5, 8, 8.5, 13.5);
+        ctx.stroke();
+      },
+      // Standing your ground: a shield.
+      guard: (ctx) => {
+        ctx.beginPath();
+        ctx.moveTo(8, 1);
+        ctx.lineTo(14.2, 3.4);
+        ctx.lineTo(14.2, 7.6);
+        ctx.quadraticCurveTo(14.2, 12.6, 8, 15.2);
+        ctx.quadraticCurveTo(1.8, 12.6, 1.8, 7.6);
+        ctx.lineTo(1.8, 3.4);
+        ctx.closePath();
+        ctx.fill();
+      },
+      // Energy back: a plus.
+      health: (ctx) => {
+        ctx.fillRect(6, 1.5, 4, 13);
+        ctx.fillRect(1.5, 6, 13, 4);
+      },
+      // Gems: the gem itself.
+      pickup: (ctx) => {
+        line(ctx, 8, 1, 15, 8, 8, 15, 1, 8);
+        ctx.closePath();
+        ctx.fill();
+      },
+      // A weapon: the sights, like the reticle in the run.
+      weapon: (ctx) => {
+        ctx.beginPath();
+        ctx.arc(8, 8, 4.6, 0, Math.PI * 2);
+        ctx.stroke();
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          line(ctx, 8 + dx * 2.6, 8 + dy * 2.6, 8 + dx * 7.4, 8 + dy * 7.4);
+          ctx.stroke();
+        }
+      },
+      // Charm: a spiral.
+      charm: (ctx) => {
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        for (let i = 0; i <= 80; i++) {
+          const t = i / 80;
+          const a = t * Math.PI * 2 * 2.25;
+          ctx.lineTo(8 + Math.cos(a) * t * 6.6, 8 + Math.sin(a) * t * 6.6);
+        }
+        ctx.stroke();
+      },
+    };
+    for (const [name, paint] of Object.entries(draw)) {
+      const canvas = this.textures.createCanvas(`icon-${name}`, 16 * S, 16 * S)!;
+      const ctx = canvas.getContext();
+      ctx.scale(S, S);
+      ctx.fillStyle = ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.2;
+      ctx.lineCap = ctx.lineJoin = 'round';
+      paint(ctx);
+      canvas.refresh();
+    }
   }
 
   /** A soft round glow (radial gradient), `size` world units across. */

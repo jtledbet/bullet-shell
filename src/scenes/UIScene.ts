@@ -9,7 +9,7 @@ import { refreshMusic } from '../music';
 import { bestRun, devFlareOn, devOn, devShotgunOn, isMuted, labelsOn, setDevFlare, setDevShotgun, setLabels, setMuted } from '../storage';
 import { POWER_NAMES, POWER_TIPS, TRAIT_COLOURS, type Trait } from '../traits';
 import type { HudState, MapState, ShopActions, ShopView } from './GameScene';
-import type { Upgrade } from '../upgrades';
+import type { CardIcon, Upgrade } from '../upgrades';
 
 const PAD = 32; // clears rounded corners and notches in landscape
 /** Minimap: its radius on screen, and how far into the world its rim reaches. */
@@ -44,9 +44,31 @@ const FONT = 'system-ui, sans-serif';
 const SITE_URL = 'https://ledsec.dev/games/';
 /** Half the centre-to-centre gap between two side-by-side menu buttons. */
 const PAIR_OFFSET = 98;
-/** The shop: the gap between its cards, and the room kept clear above them for the corner buttons. */
+/**
+ * The shop: the gap between its cards, and the room kept clear above them for the corner buttons
+ * (and the badges on the cards' top edges). The cards give up as much height as they move down,
+ * so the buttons under them stay put.
+ */
 const SHOP_GAP = 12;
-const SHOP_TOP_MIN = 76;
+const SHOP_TOP_MIN = 88;
+const SHOP_CARD_ROOM = 168;
+/** The round badge on a card's top edge, and the icon inside it. */
+const BADGE_R = 14;
+const BADGE_ICON = 18;
+/** How far a card's words move down to clear its badge. */
+const BADGE_ROOM = 6;
+/** A card that grows no tree (the second-wind cards) keeps the plain teal. */
+const CARD_PLAIN = 0x5eead4;
+const hexOf = (colour: number) => `#${colour.toString(16).padStart(6, '0')}`;
+
+/** What a card shows: its name and lines, and optionally its tree's colour and its icon. */
+interface CardFace {
+  name: string;
+  desc: string;
+  tip?: string;
+  trait?: Trait | null;
+  icon?: CardIcon;
+}
 
 /** An explanation, plain or with a bold title over it. */
 type TipText = string | { title: string; text: string };
@@ -501,11 +523,11 @@ export class UIScene extends Phaser.Scene {
   }
 
   /** A row of cards under a title; picking one closes the screen. */
-  showCards<T extends { name: string; desc: string; tip?: string }>(title: string, cards: T[], onPick: (card: T) => void) {
+  showCards<T extends CardFace>(title: string, cards: T[], onPick: (card: T) => void) {
     this.openMenu(() => this.cardItems(title, cards, onPick));
   }
 
-  private cardItems<T extends { name: string; desc: string; tip?: string }>(title: string, choices: T[], onPick: (card: T) => void) {
+  private cardItems<T extends CardFace>(title: string, choices: T[], onPick: (card: T) => void) {
     const { w, h } = this;
     const items: Phaser.GameObjects.GameObject[] = [this.title(title, h * 0.13)];
     const cardW = Math.min(230, (w - PAD * 2 - 32) / 3);
@@ -513,19 +535,29 @@ export class UIScene extends Phaser.Scene {
     const top = h * 0.57 - cardH / 2;
     choices.forEach((u, i) => {
       const x = w / 2 + (i - (choices.length - 1) / 2) * (cardW + 16);
-      const card = this.add.rectangle(x, top + cardH / 2, cardW, cardH, 0x1e293b).setStrokeStyle(2, 0x5eead4);
-      const name = this.label(x, top + 14, u.name, { fontSize: '19px', fontStyle: 'bold', color: '#f8fafc' }).setOrigin(0.5, 0);
+      // Each card wears the colour of the tree it grows, like the shop's.
+      const colour = u.trait ? TRAIT_COLOURS[u.trait] : CARD_PLAIN;
+      const card = this.add.rectangle(x, top + cardH / 2, cardW, cardH, 0x1e293b).setStrokeStyle(2, colour);
+      const name = this.label(x, top + 14 + BADGE_ROOM, u.name, { fontSize: '19px', fontStyle: 'bold', color: '#f8fafc' }).setOrigin(0.5, 0);
       // What it does, then what it is in plain words.
       const desc = this
-        .label(x, top + 46, u.desc, { fontSize: '15px', color: '#5eead4', align: 'center', wordWrap: { width: cardW - 24 } })
+        .label(x, top + 46 + BADGE_ROOM, u.desc, { fontSize: '15px', color: hexOf(colour), align: 'center', wordWrap: { width: cardW - 24 } })
         .setOrigin(0.5, 0);
       const tip = this
         .label(x, desc.y + desc.height + 10, u.tip ?? '', { fontSize: '13px', color: '#cbd5e1', align: 'center', wordWrap: { width: cardW - 24 }, lineSpacing: 2 })
         .setOrigin(0.5, 0);
       this.makeButton(card, () => onPick(u));
-      items.push(card, name, desc, tip);
+      items.push(card, name, desc, tip, ...this.cardBadge(x, top, u.icon, colour));
     });
     return items;
+  }
+
+  /** A round badge on a card's top edge holding the icon for what the card does, in the card's colour. */
+  private cardBadge(x: number, y: number, icon: CardIcon | undefined, colour: number, alpha = 1): Phaser.GameObjects.GameObject[] {
+    if (!icon) return [];
+    const ring = this.add.circle(x, y, BADGE_R, 0x0f172a).setStrokeStyle(2, colour, alpha);
+    const mark = this.add.image(x, y, `icon-${icon}`).setDisplaySize(BADGE_ICON, BADGE_ICON).setTint(colour).setAlpha(alpha);
+    return [ring, mark];
   }
 
   /** The shop between waves: the offers, a reroll, and the way on. Buying or rerolling redraws it in place. */
@@ -537,7 +569,7 @@ export class UIScene extends Phaser.Scene {
     const { w, h } = this;
     const n = Math.max(1, v.offers.length);
     const cardW = Math.min(210, (w - PAD * 2 - SHOP_GAP * (n - 1)) / n);
-    const cardH = Math.min(250, h - 156);
+    const cardH = Math.min(250, h - SHOP_CARD_ROOM);
     const top = Math.max(SHOP_TOP_MIN, (h - cardH) / 2 - 10);
     const span = n * cardW + (n - 1) * SHOP_GAP;
     const redraw = () => this.buildMenu();
@@ -549,11 +581,11 @@ export class UIScene extends Phaser.Scene {
       if (!o) return items.push(this.add.rectangle(x, y, cardW, cardH, 0x0f172a, 0.5).setStrokeStyle(1, 0x334155));
       const afford = v.gems >= o.price;
       // Each card wears the colour of the trait it leans to.
-      const colour = o.trait ? TRAIT_COLOURS[o.trait] : 0x5eead4;
-      const hex = `#${colour.toString(16).padStart(6, '0')}`;
+      const colour = o.trait ? TRAIT_COLOURS[o.trait] : CARD_PLAIN;
+      const hex = hexOf(colour);
       const wrap = { width: cardW - 20 };
       const card = this.add.rectangle(x, y, cardW, cardH, 0x1e293b).setStrokeStyle(2, colour, afford ? 1 : 0.35);
-      const name = this.label(x, top + 12, o.name, { fontSize: '17px', fontStyle: 'bold', color: '#f8fafc', align: 'center', wordWrap: wrap }).setOrigin(0.5, 0);
+      const name = this.label(x, top + 12 + BADGE_ROOM, o.name, { fontSize: '17px', fontStyle: 'bold', color: '#f8fafc', align: 'center', wordWrap: wrap }).setOrigin(0.5, 0);
       const desc = this.label(x, name.y + name.height + 8, o.desc, { fontSize: '14px', color: hex, align: 'center', wordWrap: wrap }).setOrigin(0.5, 0);
       const tip = this.label(x, desc.y + desc.height + 8, o.tip, { fontSize: '12px', color: '#cbd5e1', align: 'center', wordWrap: wrap, lineSpacing: 2 }).setOrigin(0.5, 0);
       const price = this
@@ -566,7 +598,7 @@ export class UIScene extends Phaser.Scene {
         if (act.buy(i)) sfx.gem();
         redraw();
       }, true);
-      items.push(card, name, desc, tip, price);
+      items.push(card, name, desc, tip, price, ...this.cardBadge(x, top, o.icon, colour, afford ? 1 : 0.4));
     });
     // Underneath: what you have, a reroll, and the next wave.
     const by = top + cardH + 40;

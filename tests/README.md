@@ -53,6 +53,7 @@ hold the game mid-check. `abilitytest` and `tiptest` clear that to check the car
 | `broodtest` | The brood that follows the first angry seed |
 | `shoptest` | The shop between waves: kills give experience, gems are money, gems fading and the shop opening when the lull ends, buying, rerolls, the new items, and the layout at two phone sizes (it runs `shopphone`) |
 | `readtest` | Duncan's readability notes: magenta enemy shots, charmed enemies blue and blinking white before the charm ends, taking one in (pulled in, the core's gulp), the core's blue outline, the reticle while firing, and the power's arc under the core |
+| `cardtest` | Level-up cards in their tree's colour (rage, hard, calm) and every card's icon badge, on desktop and phone: colours, the badge on the top edge clear of the title and the fullscreen button, dimmed with a card you can't afford |
 
 Two more are tools, not checks: `perftest` (frame times and where the time goes) and
 `flareshot` (a screenshot of a flare bursting).
