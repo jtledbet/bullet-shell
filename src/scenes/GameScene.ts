@@ -10,6 +10,7 @@ import { bestRun, devFlareOn, devShotgunOn, labelsOn, recordRun, setDev, setLabe
 import { CORE_COLOURS, CORE_WHITE, POWER_NAMES, TRAIT_COLOURS, type Trait } from '../traits';
 import { baseStats, rollUpgrades, type Stats } from '../upgrades';
 import { priceOf, rerollPrice, rollShop, SHOP_OFFERS, type ShopItem } from '../shop';
+import { WaveGrid } from '../wavegrid';
 
 type Sprite = Phaser.Physics.Arcade.Sprite;
 type Vec = Phaser.Math.Vector2;
@@ -520,7 +521,7 @@ export class GameScene extends Phaser.Scene {
   private rescued = false;
   private shield = 0;
   private shieldFx!: Phaser.GameObjects.Graphics;
-  private grid!: Phaser.GameObjects.Graphics;
+  private grid!: WaveGrid;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private readonly aimVec = new Phaser.Math.Vector2();
   private readonly moveVec = new Phaser.Math.Vector2();
@@ -675,9 +676,8 @@ export class GameScene extends Phaser.Scene {
     this.physics.resume();
     this.time.paused = false;
 
-    this.grid = this.add.graphics();
-    this.grid.lineStyle(1, GRID_COLOUR);
-    for (let p = 0; p <= GRID_SIZE; p += GRID_TILE) this.grid.lineBetween(p, 0, p, GRID_SIZE).lineBetween(0, p, GRID_SIZE, p);
+    // Bent by explosives' waves where WebGL allows (see wavegrid.ts).
+    this.grid = new WaveGrid(this, GRID_TILE, GRID_SIZE, GRID_COLOUR);
     this.setBackdrop(FIELD_COLOUR);
     this.powerFx = this.add.graphics().setDepth(12);
     this.shieldFx = this.add.graphics().setDepth(12);
@@ -930,7 +930,7 @@ export class GameScene extends Phaser.Scene {
     const k = BLAST_KICK_PX * (this.gridKick / (BLAST_KICK_MS / 1000)) ** 2;
     const kx = Math.cos(this.blastAngle) * k;
     const ky = Math.sin(this.blastAngle) * k;
-    this.grid.setPosition(snap(v.centerX) + kx, snap(v.centerY) + ky);
+    this.grid.place(snap(v.centerX) + kx, snap(v.centerY) + ky, dt, this.cameras.main.zoom);
   }
 
   /**
@@ -1750,7 +1750,7 @@ export class GameScene extends Phaser.Scene {
     if (hits.has(e)) return;
     hits.add(e);
 
-    if (b.getData('pellet')) this.blastImpact(b.getData('blast'));
+    if (b.getData('pellet')) this.blastImpact(b.getData('blast'), e.x, e.y);
     if (!this.strike(e, this.shotDamage())) {
       if (b.getData('pellet')) this.shove(e);
       else if (!this.tutorial) this.jolt(e, b);
@@ -1863,6 +1863,7 @@ export class GameScene extends Phaser.Scene {
     }
     sfx.boom();
     this.gridKick = BLAST_KICK_MS / 1000;
+    this.grid.ripple(x, y, 'flare');
     this.flecks.explode(16, x, y);
     const colour = lerpColor(this.coreColour, 0xffffff, 0.3);
     // A glow that swells past the blast's edge, white-hot in the middle, and a ring that marks its reach.
@@ -1935,8 +1936,9 @@ export class GameScene extends Phaser.Scene {
       const b = obj as Sprite;
       if (b.active && Phaser.Math.Distance.Between(p.x, p.y, b.x, b.y) <= radius) b.disableBody(true, true);
     }
-    // The background jolts, as with a shotgun blast.
+    // The background jolts, as with a shotgun blast, and a wave rolls out from you.
     this.gridKick = BLAST_KICK_MS / 1000;
+    this.grid.ripple(p.x, p.y, 'burst');
     const colour = TRAIT_COLOURS.rage;
     this.tweens.addCounter({
       from: 0,
@@ -1969,11 +1971,12 @@ export class GameScene extends Phaser.Scene {
     e.setData('knock', KNOCKBACK_SECONDS);
   }
 
-  /** The first pellet of a blast to connect: a camera kick and a brief hit-stop. */
-  private blastImpact(blast: number) {
+  /** The first pellet of a blast to connect (at x, y): a background kick, a small wave and a brief hit-stop. */
+  private blastImpact(blast: number, x: number, y: number) {
     if (blast === this.impactBlast) return;
     this.impactBlast = blast;
     this.gridKick = BLAST_KICK_MS / 1000;
+    this.grid.ripple(x, y, 'shot');
     this.followGrid();
     if (this.hitStop > 0) return;
     this.hitStop = (this.autoShotgun ? AUTO_HIT_STOP_MS : HIT_STOP_MS) / 1000;
@@ -2400,6 +2403,8 @@ export class GameScene extends Phaser.Scene {
     }
     for (const obj of this.enemyBullets.getChildren()) (obj as Sprite).disableBody(true, true);
     this.cameras.main.flash(260, 255, 255, 255);
+    // The biggest wave of all, out from you.
+    this.grid.ripple(this.player.x, this.player.y, 'clear');
     sfx.boom();
   }
 
