@@ -40,6 +40,12 @@ const t = await open({ out: out + '-desktop', port: 9370, url: 'http://127.0.0.1
   const prices = await evaluate(`import('/src/shop.ts').then(sh => { const f = sh.SHOP_ITEMS.find(x => x.name === 'Flare'); return [sh.priceOf(f, 1), sh.priceOf(f, 3), sh.rerollPrice(1, 0), sh.rerollPrice(1, 1), sh.rerollPrice(3, 0)]; })`);
   check('prices grow by a quarter each shop, rerolls by their count', JSON.stringify(prices) === '[40,60,5,10,8]', prices);
 
+  // ---- The lull's last five seconds are counted under the core, numbers only (Max, 2026-11-25).
+  const count = (at) => evaluate(`(() => { const s = ${G}; s.elapsed = ${at}; s.waves(0); const c = s.countdown; return { shown: c.visible, text: c.text, below: c.y > s.player.y, centred: Math.abs(c.x - s.player.x) < 1, alpha: +c.alpha.toFixed(2) }; })()`);
+  const early = await count(64), five = await count(65.2), one = await count(69.4);
+  check('six seconds before the offers, no countdown yet', !early.shown, early);
+  check('then 5 down to 1, faint, under the core', five.shown && five.text === '5' && one.shown && one.text === '1' && five.below && five.centred && five.alpha <= 0.8 && one.alpha <= 0.8, { five, one });
+
   // ---- The lull's last seconds: gems left on the ground fade, then the shop opens and they're gone. Purse keeps half.
   await evaluate(`(() => { const s = ${G}; s.gems.getChildren().forEach(g => g.disableBody(true, true)); s.purse = 100; s.stats.keepGems = 0.5;
     for (let i = 0; i < 9; i++) s.dropGem(s.player.x + 2000 + i * 20, s.player.y); s.elapsed = 68.6; return true; })()`);
@@ -52,7 +58,8 @@ const t = await open({ out: out + '-desktop', port: 9370, url: 'http://127.0.0.1
   check('when the lull ends the game holds for the shop', opened.frozen && opened.shops === 1 && opened.elapsed >= 70 && opened.elapsed < 70.5, opened);
   check('the gems left behind are gone, and Purse kept half their worth (4 of 9)', opened.ground === 0 && opened.purse === 104, opened);
   const texts = await menuTexts();
-  check('the shop shows four offers, the purse, a reroll and the next wave', opened.offers === 4 && texts.includes('shop') && texts.includes('104 gems') && texts.includes('reroll · 5 gems') && texts.includes('next wave'), texts);
+  check('the countdown is gone once the offers are up', !(await evaluate(`${G}.countdown.visible`)));
+  check('the offers screen: four offers, the purse, a reroll and the next wave, and no "shop" title', opened.offers === 4 && !texts.some((x) => /shop/.test(x)) && texts.includes('104 gems') && texts.includes('reroll · 5 gems') && texts.includes('next wave'), texts);
   await shot('shop.png');
 
   // ---- Buying: click a card. With too few gems, nothing happens.

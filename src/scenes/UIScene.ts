@@ -180,7 +180,7 @@ export class UIScene extends Phaser.Scene {
       const shown = (text: string) => () => (this.hudShown && !this.menu ? text : '');
       this.hpZone = this.tip(this.add.zone(PAD, PAD - 6, 260, 24).setOrigin(0).setInteractive(), shown('Your energy. Hits take it, and so does every shot you fire. Firing alone can never take the last of it.'));
       this.xpZone = this.tip(this.add.zone(0, 0, 100, 10).setOrigin(0).setInteractive(), shown('Kills and souls fill this. When it is full you gain a level and choose a card.'));
-      this.mapZone = this.tip(this.add.zone(-999, -999, MAP_R * 2, MAP_R * 2).setInteractive(), shown('A map of what is around you. Green dots are gems, to spend in the shop. White dots are energy, which heals you. Red dots are enemies.'));
+      this.mapZone = this.tip(this.add.zone(-999, -999, MAP_R * 2, MAP_R * 2).setInteractive(), shown('A map of what is around you. Green dots are gems. White dots are energy, which heals you. Red dots are enemies.'));
     }
 
     // The ability button: tap (or right-click anywhere on desktop). Hidden until the core has a trait.
@@ -585,7 +585,8 @@ export class UIScene extends Phaser.Scene {
     const top = Math.max(SHOP_TOP_MIN, (h - cardH) / 2 - 10);
     const span = n * cardW + (n - 1) * SHOP_GAP;
     const redraw = () => this.buildMenu();
-    const items: Phaser.GameObjects.GameObject[] = [this.title('shop', top - 40)];
+    // No title: "shop" isn't a word from the game's world (Max, 2026-11-25). The offers speak for themselves.
+    const items: Phaser.GameObjects.GameObject[] = [];
     v.offers.forEach((o, i) => {
       const x = w / 2 + (i - (n - 1) / 2) * (cardW + SHOP_GAP);
       const y = top + cardH / 2;
@@ -621,7 +622,7 @@ export class UIScene extends Phaser.Scene {
         if (act.reroll()) sfx.click();
         redraw();
       }, { dx: 0.001, quiet: !canReroll, keepOpen: true, height: 44, tip: 'New offers. Costs more each time.' }),
-      ...this.menuButton('next wave', by, () => act.next(), { dx: span / 2 - 90, height: 44, tip: 'Leave the shop. The next wave starts.' }),
+      ...this.menuButton('next wave', by, () => act.next(), { dx: span / 2 - 90, height: 44, tip: 'The next wave starts.' }),
     );
     return items;
   }

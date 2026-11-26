@@ -68,14 +68,14 @@ const CURIOUS_CLOSER = 150;
 const ANGRY_CLOSE = 200;
 /**
  * Phasing charms the enemies this close: for a few seconds they stop attacking and drift along
- * beside you, ringed in soft blue. Touch one for a moment and you take it in, which gives back
- * a little energy and a point of experience. Shoot one and the charm breaks. Farther enemies
- * just lose you and wander off for a while.
+ * beside you, ringed in soft blue. Touch one and it's quickly taken in: it gives its gem, as a
+ * kill does, plus a little energy and a point of experience (Max, 2026-11-25: taking one in has to
+ * pay). Shoot one and the charm breaks. Farther enemies just lose you and wander off for a while.
  */
 const CHARM_RADIUS = 280;
 const CHARM_SECONDS = 4;
 const CHARM_KEEP = 80;
-const CHARM_TAKE_SECONDS = 0.5;
+const CHARM_TAKE_SECONDS = 0.25;
 const CHARM_HEAL = 3;
 const CHARM_RECOIL = 150;
 /**
@@ -161,6 +161,13 @@ const LULL_LEAVE_SECONDS = 2.5;
 const GEM_MAX_GROWTH = 2.5;
 /** Gems still on the ground fade over the lull's last seconds, then are gone when the shop opens. */
 const GEM_FADE_SECONDS = 2;
+/**
+ * The lull's last seconds are counted down under the core, numbers only and faint, so the offers
+ * don't arrive out of nowhere (Max, 2026-11-25: "just the numbers").
+ */
+const COUNTDOWN_SECONDS = 5;
+/** How far below the core's middle the count sits (world px). */
+const COUNTDOWN_BELOW = 22;
 /** How often the minimap is redrawn, in seconds. */
 const MAP_REFRESH = 0.1;
 /** Draw scale for the oversized textures. Body sizes passed to setCircle are in texture pixels. */
@@ -556,6 +563,8 @@ export class GameScene extends Phaser.Scene {
   private mapTimer = 0;
   /** Whether the run is between waves. */
   private lulling = false;
+  /** The lull's last seconds, counted under the core. */
+  private countdown!: Phaser.GameObjects.Text;
   private invuln = 0;
   private pendingLevels = 0;
   /** True whenever play is halted: pause, level-up, or game over. */
@@ -722,6 +731,7 @@ export class GameScene extends Phaser.Scene {
       held: false,
       colour: '#cbd5e1',
     }));
+    this.countdown = this.add.text(0, 0, '', { ...small, fontSize: '11px', color: '#94a3b8' }).setOrigin(0.5, 0).setDepth(20).setVisible(false);
     this.damageTexts = Array.from({ length: DAMAGE_POOL }, () =>
       this.add
         .text(0, 0, '', { ...small, fontSize: '10px', fontStyle: 'bold', color: '#ffffff', stroke: '#0b1222', strokeThickness: 2 })
@@ -1327,12 +1337,22 @@ export class GameScene extends Phaser.Scene {
       // Each one gets its own moment to leave, so they thin out rather than vanish together.
       if (lull) for (const obj of this.enemies.getChildren()) (obj as Sprite).setData('leave', Math.random() * LULL_LEAVE_SECONDS);
       // The lull is over: the shop, before the next wave.
-      else return this.openShop();
+      else {
+        this.countdown.setVisible(false);
+        return this.openShop();
+      }
     }
     if (!lull) return;
     // The gems still lying about fade over the lull's last seconds: get them while you can.
     const left = WAVE_SECONDS + LULL_SECONDS - (this.elapsed % (WAVE_SECONDS + LULL_SECONDS));
     if (left < GEM_FADE_SECONDS) for (const obj of this.gems.getChildren()) (obj as Sprite).setAlpha(left / GEM_FADE_SECONDS);
+    // 5, 4, 3, 2, 1 under the core, each brightest as it appears and fading through its second.
+    const counting = left <= COUNTDOWN_SECONDS;
+    this.countdown.setVisible(counting);
+    if (counting) {
+      const n = Math.ceil(left);
+      this.countdown.setText(String(n)).setPosition(this.player.x, this.player.y + COUNTDOWN_BELOW).setAlpha(0.3 + 0.5 * (left - (n - 1)));
+    }
     const view = this.cameras.main.worldView;
     for (const obj of this.enemies.getChildren()) {
       const e = obj as Sprite;
@@ -1497,7 +1517,8 @@ export class GameScene extends Phaser.Scene {
 
   /**
    * Touching a charmed enemy takes it in: it is drawn into your middle, shrinking as it goes, and
-   * the core gulps. It gives back a little energy and a point of experience.
+   * the core gulps. It gives its gem (dropped in your middle, so you pick it up at once), a little
+   * energy and a point of experience.
    */
   private takeIn(e: Sprite) {
     if (this.frozen || !e.active) return;
@@ -1519,6 +1540,7 @@ export class GameScene extends Phaser.Scene {
     this.kills++;
     this.heal(CHARM_HEAL);
     this.gainXp(1);
+    this.dropGem(this.player.x, this.player.y);
   }
 
   /** Phasing: nearby enemies are charmed, farther ones lose you and wander off. They are themselves again a little after. */
@@ -2559,6 +2581,7 @@ export class GameScene extends Phaser.Scene {
 
   private gameOver() {
     this.frozen = true;
+    this.countdown.setVisible(false);
     setHum(false);
     this.physics.pause();
     this.hp = 0;

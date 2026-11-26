@@ -72,7 +72,7 @@ const run = async (w, h, port, phone) => {
   check(`${tag} shop: every offer has its icon, in its colour`, sh.cards.length === 4 && sh.cards.every((c) => c.mark && c.mark.key === 'icon-' + icons[c.name] && c.ring && c.mark.tint === c.stroke), sh.cards);
   const flare = sh.cards.find((c) => c.name === 'flare'), purse = sh.cards.find((c) => c.name === 'purse');
   check(`${tag} shop: too dear (Flare, 40) is dimmed, badge too; affordable (Purse, 20) is not`, flare.mark.alpha < 0.5 && flare.ring.alpha < 0.5 && purse.mark.alpha === 1, { flare, purse });
-  check(`${tag} shop: badges clear of the title and the fullscreen button`, sh.cards.every((c) => c.top - c.ring.r > sh.titleBottom && (!sh.fs || c.top - c.ring.r > sh.fs.bottom || c.mark.right < sh.fs.left)), { titleBottom: sh.titleBottom, fs: sh.fs, tops: sh.cards.map((c) => c.top) });
+  check(`${tag} shop: no title, and the badges clear of the fullscreen button`, sh.titleBottom === null && sh.cards.every((c) => (!sh.fs || c.top - c.ring.r > sh.fs.bottom || c.mark.right < sh.fs.left)), { titleBottom: sh.titleBottom, fs: sh.fs, tops: sh.cards.map((c) => c.top) });
   await shot(`shop${phone ? '-phone' : ''}.png`);
   t.done();
 };

@@ -11,7 +11,7 @@ const setup = (mode) => evaluate(`(() => { const s = ${G}; s.traits = { hard: 0,
   s.enemies.getChildren().filter(e => e.active).forEach((e, i) => { e.setPosition(s.player.x + Math.cos(i * 1.6) * 130, s.player.y + Math.sin(i * 1.6) * 130); e.setData('hp', 20); e.setData('speed', 70); e.setData('tag', i); });
   return true; })()`);
 const foes = () => evaluate(`(() => { const s = ${G}; return s.enemies.getChildren().filter(e => e.active).map(e => ({ tag: e.getData('tag'), charmed: !!e.getData('charmed'), d: Math.round(Math.hypot(e.x - s.player.x, e.y - s.player.y)), alpha: +e.alpha.toFixed(2) })); })()`);
-const me = () => evaluate(`(() => { const s = ${G}; return { hp: +s.hp.toFixed(1), xp: s.xp, count: s.kills, level: s.level }; })()`);
+const me = () => evaluate(`(() => { const s = ${G}; return { hp: +s.hp.toFixed(1), xp: s.xp, count: s.kills, level: s.level, purse: s.purse }; })()`);
 
 await setup('heaven'); await sleep(300);
 check('heaven path: the count reads "souls"', (await evaluate(`${U}.info.text`)).includes('   0 souls   '), await evaluate(`${U}.info.text`));
@@ -25,12 +25,15 @@ await shot('charmed.png');
 // Touch one: it is taken in.
 const before = await me();
 await evaluate(`(() => { const s = ${G}; const e = s.enemies.getChildren().find(o => o.active && o.getData('tag') === 0); window.__hold = () => { if (e.active) { e.setPosition(s.player.x + 6, s.player.y); } }; s.events.on('update', window.__hold); })()`);
-// Taking in needs about 0.5 s of contact, which a slow headless frame rate can stretch to nearly 1 s: wait for it, up to 2.5 s.
+// Taking in needs about 0.25 s of contact, which a slow headless frame rate can stretch: wait for it, up to 2.5 s.
 for (let i = 0; i < 25 && (await me()).count === before.count; i++) await sleep(100);
+// Its gem drops in the core's middle and is picked up at once.
+await sleep(400);
 await evaluate(`${G}.events.off('update', window.__hold)`);
 const after = await me();
 f = await foes();
 check('holding against one takes it in', !f.some((e) => e.tag === 0) && after.count === before.count + 1, { before, after });
+check('it gives its gem, as a kill does (Max, 2026-11-25)', after.purse === before.purse + 1, { before, after });
 check('that gives back 3 energy and a point of experience', Math.abs(after.hp - before.hp - 3) < 0.2 && (after.xp === before.xp + 1 || after.level > before.level), { before, after });
 if (await evaluate(`!!${U}.menu`)) { await evaluate(`(() => { const u = ${U}; const s = ${G}; s.pendingLevels = 0; s.frozen = false; s.physics.resume(); u.closeMenu(); })()`); }
 check('the count now reads 1 soul(s)', (await evaluate(`${U}.info.text`)).includes('   1 souls   '), await evaluate(`${U}.info.text`));
