@@ -665,7 +665,8 @@ export class UIScene extends Phaser.Scene {
         this.title('Paused', h * 0.25),
         ...this.menuButton('Resume', h * 0.47, onResume, { tip: 'Back to it. Esc, P and Space do the same.' }),
         ...this.menuButton('reorient', h * 0.68, onRestart, { dx: -PAIR_OFFSET, tip: 'Give up this run and start over from orientation.' }),
-        ...this.exitButton(h * 0.68),
+        // Max, 2026-11-25: "it should say resume reorient and retire".
+        ...this.exitButton(h * 0.68, PAIR_OFFSET, 'retire'),
         ...this.resumeCorner(onResume),
         ...this.buildOrb(),
         ...this.soundButton(),
@@ -822,8 +823,8 @@ export class UIScene extends Phaser.Scene {
   }
 
   /** Leaves the game for the site. Sits to the right of another button, styled quieter. */
-  private exitButton(y: number, dx = PAIR_OFFSET) {
-    return this.menuButton('Exit to site', y, () => window.location.assign(SITE_URL), { dx, quiet: true, tip: 'Leave the game for the games page.' });
+  private exitButton(y: number, dx = PAIR_OFFSET, text = 'Exit to site') {
+    return this.menuButton(text, y, () => window.location.assign(SITE_URL), { dx, quiet: true, tip: 'Leave the game for the games page.' });
   }
 
   private menuButton(

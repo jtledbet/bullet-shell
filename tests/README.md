@@ -55,6 +55,7 @@ hold the game mid-check. `abilitytest` and `tiptest` clear that to check the car
 | `readtest` | Duncan's readability notes: magenta enemy shots, charmed enemies blue and blinking white before the charm ends, taking one in (pulled in, the core's gulp), the core's blue outline, the reticle while firing, and the power's arc under the core |
 | `cardtest` | Level-up cards in their tree's colour (rage, hard, calm) and every card's icon badge, on desktop and phone: colours, the badge on the top edge clear of the title and the fullscreen button, dimmed with a card you can't afford |
 | `rippletest` | The wave grid: with nothing going off it matches the plain grid's lines; the flare, rage's burst, the screen clear and a shotgun blast's first hit each send their own ring (the jolt stays), sized shot < flare < burst < clear; a ring moves the lines and they settle back; at most 8 rings; the rings wait while paused; and with `?plaingrid` (as without WebGL) the plain grid, with no rings |
+| `notyettest` | The core's rare words: pressing the power before it's ready swells its arc every time; about one press in five the core says "not yet" over its head (labels off too), never twice within 30 s and not while a power still runs; the swell fades; a ready power just goes |
 
 Two more are tools, not checks: `perftest` (frame times and where the time goes) and
 `flareshot` (a screenshot of a flare bursting).

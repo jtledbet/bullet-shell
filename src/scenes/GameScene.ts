@@ -115,6 +115,16 @@ const RETICLE_FADE = 14;
 const ARC_SPAN = 1.9;
 const ARC_GAP = 8;
 const ARC_FADE_SECONDS = 0.7;
+/** Pressing the power before it's ready: the arc swells and brightens for this long, every press. */
+const ARC_NUDGE_SECONDS = 0.35;
+/**
+ * The core speaks, but rarely (Max, 2026-11-25: "only rarely... we aren't trying to recreate Navi").
+ * "not yet": the power pressed before it's ready, about one press in five, never twice within
+ * NOT_YET_QUIET seconds of play, and not while a power is still running.
+ */
+const CORE_SAYS = { notYet: 'not yet' } as const;
+const NOT_YET_CHANCE = 0.2;
+const NOT_YET_QUIET = 30;
 /** Damage numbers: how many at once, how far they rise, how long they last. Damage shows times ten (a base hit reads "10"). */
 const DAMAGE_POOL = 24;
 const DAMAGE_RISE = 26;
@@ -496,7 +506,7 @@ export interface ShopActions {
   next(): void;
 }
 
-/** A thought over a seed's or enemy's head. */
+/** A thought over a seed's or enemy's head, or the core's rare words. */
 interface Thought {
   text: Phaser.GameObjects.Text;
   on: Sprite | null;
@@ -619,6 +629,9 @@ export class GameScene extends Phaser.Scene {
   private powerArc!: Phaser.GameObjects.Graphics;
   private powerFull = 1;
   private arcFade = 0;
+  /** The arc's swell when the power is pressed too early (1 fresh, 0 gone), and when the core last said "not yet" (run seconds). */
+  private arcNudge = 0;
+  private notYetAt = -Infinity;
   private irritated = false;
   private bumps = 0;
   private bumpLeft = 0;
@@ -679,7 +692,8 @@ export class GameScene extends Phaser.Scene {
     this.absorbing = 0;
     this.heyed = false;
     this.abilityCooldown = this.phaseLeft = this.braceLeft = 0;
-    this.charmLeft = this.gulp = this.reticleAlpha = this.arcFade = 0;
+    this.charmLeft = this.gulp = this.reticleAlpha = this.arcFade = this.arcNudge = 0;
+    this.notYetAt = -Infinity;
     setPauseMusic(false);
     setHum(true);
     this.physics.resume();
@@ -995,8 +1009,10 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
       const j = t.shake ? 0.7 : 0;
+      // The core's words sit just over its edge (it grows); the others over their heads.
+      const above = e === this.player ? this.coreEdge() + 4 : 17 * (e.scaleY / SPRITE_SCALE);
       t.text
-        .setPosition(e.x + Phaser.Math.FloatBetween(-j, j), e.y - 17 * (e.scaleY / SPRITE_SCALE) + Phaser.Math.FloatBetween(-j, j))
+        .setPosition(e.x + Phaser.Math.FloatBetween(-j, j), e.y - above + Phaser.Math.FloatBetween(-j, j))
         .setAngle(t.shake ? Phaser.Math.FloatBetween(-5, 5) : 0)
         .setAlpha(t.held ? 0.9 : Math.min(1, t.left / 0.3));
     }
@@ -2188,6 +2204,7 @@ export class GameScene extends Phaser.Scene {
   /** The power's arc under the core: draining while it runs, filling while it recharges, then a moment full before it fades. */
   private drawPowerArc(dt: number) {
     const g = this.powerArc.clear();
+    this.arcNudge = Math.max(0, this.arcNudge - dt / ARC_NUDGE_SECONDS);
     const t = this.tutorial ? null : this.strongestTrait();
     if (!t || this.ui.needsIntro(t)) return;
     const running = Math.max(this.phaseLeft, this.braceLeft);
@@ -2199,7 +2216,7 @@ export class GameScene extends Phaser.Scene {
       this.arcFade = 1;
     } else if (charge < 1) {
       fill = charge;
-      alpha = 0.7;
+      alpha = 0.7 + 0.3 * this.arcNudge;
       this.arcFade = 1;
     } else {
       this.arcFade = Math.max(0, this.arcFade - dt / ARC_FADE_SECONDS);
@@ -2211,8 +2228,9 @@ export class GameScene extends Phaser.Scene {
     const r = this.coreEdge() + ARC_GAP;
     // Angles run clockwise from the right, so straight down is half pi; the bar fills from left to right.
     const left = Math.PI / 2 + ARC_SPAN / 2;
-    g.lineStyle(3, colour, 0.2 * alpha).beginPath().arc(x, y, r, left, left - ARC_SPAN, true).strokePath();
-    if (fill > 0) g.lineStyle(3, colour, 0.95 * alpha).beginPath().arc(x, y, r, left, left - ARC_SPAN * Math.min(1, fill), true).strokePath();
+    const width = 3 + 2 * this.arcNudge;
+    g.lineStyle(width, colour, 0.2 * alpha).beginPath().arc(x, y, r, left, left - ARC_SPAN, true).strokePath();
+    if (fill > 0) g.lineStyle(width, colour, 0.95 * alpha).beginPath().arc(x, y, r, left, left - ARC_SPAN * Math.min(1, fill), true).strokePath();
   }
 
   /** The strongest trait; ties go to the one gained most recently. None until the core has any. */
@@ -2279,9 +2297,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private useAbility() {
-    if (this.tutorial || this.frozen || this.abilityCooldown > 0) return;
+    if (this.tutorial || this.frozen) return;
     const t = this.strongestTrait();
     if (!t) return;
+    if (this.abilityCooldown > 0) return this.notYet();
     this.abilityCooldown = this.abilityCooldownFull = this.cooldownSeconds();
     sfx.power(POWER_NAMES[t] as 'brace' | 'phase' | 'burst');
     if (t !== 'rage') this.powerRing(TRAIT_COLOURS[t]);
@@ -2297,6 +2316,15 @@ export class GameScene extends Phaser.Scene {
       this.burst();
       this.lastAbility = 'burst';
     }
+  }
+
+  /** The power pressed before it's ready: its arc swells for a moment, and now and then the core says so. */
+  private notYet() {
+    this.arcNudge = 1;
+    if (Math.max(this.phaseLeft, this.braceLeft) > 0) return;
+    if (this.elapsed - this.notYetAt < NOT_YET_QUIET || Math.random() >= NOT_YET_CHANCE) return;
+    this.notYetAt = this.elapsed;
+    this.think(this.player, CORE_SAYS.notYet, { critical: true });
   }
 
   /** Using a power: a ring in its colour swells out from the core and fades. */
